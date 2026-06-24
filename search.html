@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>β君 添付文書検索</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 900px;
+      margin: 30px auto;
+      padding: 0 16px;
+      line-height: 1.6;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      margin: 6px 0 12px;
+      font-size: 16px;
+    }
+    button {
+      padding: 10px 18px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .result {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 12px 0;
+      background: #fafafa;
+    }
+    .drug {
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .section {
+      color: #555;
+      margin: 4px 0;
+    }
+    .text {
+      white-space: pre-wrap;
+    }
+    .note {
+      font-size: 0.9em;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>β君 添付文書検索</h1>
+
+  <p class="note">
+    医療者向けの添付文書検索β版です。最終確認は必ずPMDA等の公式情報で行ってください。
+  </p>
+
+  <p><a href="index.html">トップへ戻る</a></p>
+
+  <label>成分名</label>
+  <input id="drugInput" placeholder="例：ニンテダニブ">
+
+  <label>キーワード</label>
+  <input id="keywordInput" placeholder="例：肝機能障害、妊婦、併用注意">
+
+  <button onclick="search()">検索</button>
+
+  <p id="status">データ読み込み中...</p>
+
+  <div id="results"></div>
+
+  <script>
+    let drugData = [];
+
+    async function loadData() {
+      const res = await fetch("data/public_drugs.json");
+      drugData = await res.json();
+      document.getElementById("status").textContent =
+        `データ読み込み完了：${drugData.length}チャンク`;
+    }
+
+    function normalize(text) {
+      return (text || "")
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, "");
+    }
+
+    function search() {
+      const drugQuery = normalize(document.getElementById("drugInput").value);
+      const keywordQuery = normalize(document.getElementById("keywordInput").value);
+      const resultsDiv = document.getElementById("results");
+
+      resultsDiv.innerHTML = "";
+
+      if (!drugQuery && !keywordQuery) {
+        document.getElementById("status").textContent = "薬剤名かキーワードを入力してください。";
+        return;
+      }
+
+      const hits = drugData.filter(item => {
+        const drug = normalize(item.drug);
+        const section = normalize(item.section);
+        const heading = normalize(item.heading);
+        const text = normalize(item.text);
+
+        const drugOk = !drugQuery || drug.includes(drugQuery);
+        const keywordOk =
+          !keywordQuery ||
+          section.includes(keywordQuery) ||
+          heading.includes(keywordQuery) ||
+          text.includes(keywordQuery);
+
+        return drugOk && keywordOk;
+      }).slice(0, 50);
+
+      document.getElementById("status").textContent =
+        `${hits.length}件表示（最大50件）`;
+
+      if (hits.length === 0) {
+        resultsDiv.innerHTML = "<p>該当する結果がありません。</p>";
+        return;
+      }
+
+      for (const item of hits) {
+        const div = document.createElement("div");
+        div.className = "result";
+
+        div.innerHTML = `
+          <div class="drug">${escapeHtml(item.drug)}</div>
+          <div class="section">${escapeHtml(item.section || item.heading || "")}</div>
+          <div class="text">${escapeHtml(item.text)}</div>
+          <div class="note">source: ${escapeHtml(item.source_file)}</div>
+        `;
+
+        resultsDiv.appendChild(div);
+      }
+    }
+
+    function escapeHtml(text) {
+      return (text || "").toString()
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    loadData();
+  </script>
+</body>
+</html>
