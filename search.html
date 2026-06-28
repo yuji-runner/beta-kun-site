@@ -11,11 +11,12 @@
       padding: 0 16px;
       line-height: 1.6;
     }
-    input {
+    input, select, textarea {
       width: 100%;
       padding: 10px;
       margin: 6px 0 12px;
       font-size: 16px;
+      box-sizing: border-box;
     }
     button {
       padding: 10px 18px;
@@ -44,6 +45,34 @@
       font-size: 0.9em;
       color: #666;
     }
+    .notice {
+      border-left: 4px solid #4a6fa5;
+      background: #f4f7fb;
+      padding: 10px 12px;
+      margin: 16px 0;
+      color: #333;
+    }
+    .score {
+      font-size: 0.85em;
+      color: #555;
+      margin-top: 8px;
+    }
+    .match {
+      font-size: 0.85em;
+      color: #555;
+    }
+    .contact {
+      margin-top: 32px;
+      border-top: 1px solid #ddd;
+      padding-top: 20px;
+    }
+    .contact textarea {
+      min-height: 140px;
+      resize: vertical;
+    }
+    .contact-status {
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -59,80 +88,213 @@
   <input id="drugInput" placeholder="例：ニンテダニブ">
 
   <label>キーワード</label>
-  <input id="keywordInput" placeholder="例：肝機能障害、妊婦、併用注意">
+  <input id="keywordInput" placeholder="例：むくみ、だるい、尿が茶色い">
 
   <button onclick="search()">検索</button>
 
-  <p id="status">データ読み込み中...</p>
+  <div class="notice">
+    添付文書上、この薬ではこのような副作用が報告されています。<br>
+    この症状と関連する可能性がある項目です。<br>
+    心配な場合は医師・薬剤師へご相談ください。<br>
+    ※診断を行うものではありません。
+  </div>
+
+  <p id="status">薬剤名と症状キーワードを入力してください。</p>
 
   <div id="results"></div>
 
+  <section class="contact">
+    <h2>ご意見・お問い合わせ</h2>
+    <p class="note">
+      返信が必要な方はメールアドレスをご記入ください。メールアドレスがない場合は返信できませんが、ご意見として確認します。
+    </p>
+    <p class="note">
+      薬や症状についてのご相談では、薬剤名、症状、いつから始まったか、受診状況などを書いていただくと確認しやすくなります。
+    </p>
+    <p class="notice">
+      このフォームでは診断や緊急対応はできません。強い息苦しさ、意識障害、胸痛、重いアレルギー症状などがある場合は、医療機関へ連絡してください。
+    </p>
+
+    <label>お名前（任意。ニックネーム可）</label>
+    <input id="contactName" maxlength="80">
+
+    <label>メールアドレス（任意。返信が必要な方のみ）</label>
+    <input id="contactEmail" type="email" maxlength="254">
+
+    <label>種別（任意）</label>
+    <select id="contactCategory">
+      <option value="">選択しない</option>
+      <option>薬についての相談</option>
+      <option>副作用かもしれない症状</option>
+      <option>サイトの不具合</option>
+      <option>検索結果への意見</option>
+      <option>その他</option>
+    </select>
+
+    <label>関連する薬剤名（任意）</label>
+    <input id="contactDrug" maxlength="120">
+
+    <label>お問い合わせ内容（必須・自由記載）</label>
+    <textarea id="contactMessage" maxlength="4000"></textarea>
+
+    <button onclick="submitContact()">送信</button>
+    <p id="contactStatus" class="contact-status"></p>
+  </section>
+
   <script>
-    let drugData = [];
-
-    async function loadData() {
-      const res = await fetch("data/public_drugs.json");
-      drugData = await res.json();
-      document.getElementById("status").textContent =
-        `データ読み込み完了：${drugData.length}チャンク`;
+    const API_BASE_URL = "https://scout-affiliate-silver-receiver.trycloudflare.com";
+    function apiUrl(path) {
+      return `${API_BASE_URL}${path}`;
     }
 
-    function normalize(text) {
-      return (text || "")
-        .toString()
-        .toLowerCase()
-        .replace(/\s+/g, "");
+    let lastSearchContext = {};
+    let contactCsrfToken = "";
+
+    async function loadContactCsrfToken() {
+      try {
+        const res = await fetch(apiUrl("/api/contact/csrf"));
+        const data = await res.json();
+        if (res.ok && data.status === "ok") {
+          contactCsrfToken = data.csrf_token;
+        }
+      } catch (error) {
+        contactCsrfToken = "";
+      }
     }
 
-    function search() {
-      const drugQuery = normalize(document.getElementById("drugInput").value);
-      const keywordQuery = normalize(document.getElementById("keywordInput").value);
+    async function search() {
+      const drugQuery = document.getElementById("drugInput").value.trim();
+      const keywordQuery = document.getElementById("keywordInput").value.trim();
       const resultsDiv = document.getElementById("results");
+      const status = document.getElementById("status");
 
       resultsDiv.innerHTML = "";
 
-      if (!drugQuery && !keywordQuery) {
-        document.getElementById("status").textContent = "薬剤名かキーワードを入力してください。";
+      if (!drugQuery) {
+        status.textContent = "薬剤名を入力してください。";
+        return;
+      }
+      if (!keywordQuery) {
+        status.textContent = "症状キーワードを入力してください。";
         return;
       }
 
-      const hits = drugData.filter(item => {
-        const drug = normalize(item.drug);
-        const section = normalize(item.section);
-        const heading = normalize(item.heading);
-        const text = normalize(item.text);
+      status.textContent = "検索中...";
 
-        const drugOk = !drugQuery || drug.includes(drugQuery);
-        const keywordOk =
-          !keywordQuery ||
-          section.includes(keywordQuery) ||
-          heading.includes(keywordQuery) ||
-          text.includes(keywordQuery);
-
-        return drugOk && keywordOk;
-      }).slice(0, 50);
-
-      document.getElementById("status").textContent =
-        `${hits.length}件表示（最大50件）`;
-
-      if (hits.length === 0) {
-        resultsDiv.innerHTML = "<p>該当する結果がありません。</p>";
+      let data;
+      try {
+        const res = await fetch(apiUrl("/api/pmda/search"), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            drug: drugQuery,
+            keyword: keywordQuery,
+            limit: 20
+          })
+        });
+        data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+          throw new Error(data.message || "検索に失敗しました。");
+        }
+      } catch (error) {
+        status.textContent = error.message;
         return;
       }
 
-      for (const item of hits) {
+      status.textContent = `${data.count}件表示（Embedding類似度順）`;
+      lastSearchContext = {
+        drug: data.drug || drugQuery,
+        keyword: data.keyword || keywordQuery,
+        top_results: (data.results || []).slice(0, 5).map(item => ({
+          rank: item.rank,
+          drug: item.drug,
+          section: item.section,
+          heading: item.heading,
+          score: item.score,
+          source_file: item.source_file
+        }))
+      };
+
+      if (data.results.length === 0) {
+        resultsDiv.innerHTML = "<p>該当する薬剤または結果がありません。</p>";
+        return;
+      }
+
+      for (const item of data.results) {
         const div = document.createElement("div");
         div.className = "result";
 
+        const matches = []
+          .concat(item.heading_matches || [])
+          .concat(item.text_matches || []);
+
         div.innerHTML = `
-          <div class="drug">${escapeHtml(item.drug)}</div>
+          <div class="drug">${item.rank}. ${escapeHtml(item.drug || "")}</div>
           <div class="section">${escapeHtml(item.section || item.heading || "")}</div>
-          <div class="text">${escapeHtml(item.text)}</div>
-          <div class="note">source: ${escapeHtml(item.source_file)}</div>
+          <div class="text">${escapeHtml(item.text || "")}</div>
+          <div class="score">
+            総合 ${formatScore(item.score)}
+            / 類似度 ${formatScore(item.vector_score)}
+            / 見出し加点 ${formatScore(item.heading_bonus)}
+            / 文字一致加点 ${formatScore(item.keyword_bonus)}
+          </div>
+          ${matches.length ? `<div class="match">一致語: ${escapeHtml(matches.join("、"))}</div>` : ""}
+          ${item.fallback ? `<div class="match">${escapeHtml(item.fallback_label || "")}</div>` : ""}
+          <div class="note">source: ${escapeHtml(item.source_file || "")}</div>
         `;
 
         resultsDiv.appendChild(div);
       }
+    }
+
+    async function submitContact() {
+      const status = document.getElementById("contactStatus");
+      const message = document.getElementById("contactMessage").value.trim();
+      status.textContent = "";
+
+      if (!message) {
+        status.textContent = "お問い合わせ内容を入力してください。";
+        return;
+      }
+
+      if (!contactCsrfToken) {
+        await loadContactCsrfToken();
+      }
+
+      try {
+        const res = await fetch(apiUrl("/api/contact"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": contactCsrfToken
+          },
+          body: JSON.stringify({
+            csrf_token: contactCsrfToken,
+            name: document.getElementById("contactName").value,
+            email: document.getElementById("contactEmail").value,
+            category: document.getElementById("contactCategory").value,
+            drug: document.getElementById("contactDrug").value,
+            message,
+            captcha_token: "",
+            search_context: lastSearchContext
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || data.status !== "ok") {
+          throw new Error(data.message || "送信に失敗しました。");
+        }
+        status.textContent = data.message;
+        document.getElementById("contactMessage").value = "";
+        contactCsrfToken = "";
+        await loadContactCsrfToken();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    function formatScore(value) {
+      const number = Number(value || 0);
+      return number.toFixed(3);
     }
 
     function escapeHtml(text) {
@@ -144,7 +306,7 @@
         .replaceAll("'", "&#039;");
     }
 
-    loadData();
+    loadContactCsrfToken();
   </script>
 </body>
 </html>
