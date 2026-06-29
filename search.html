@@ -24,22 +24,18 @@
       cursor: pointer;
     }
     .result {
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      padding: 12px;
-      margin: 12px 0;
-      background: #fafafa;
-    }
-    .drug {
-      font-weight: bold;
-      font-size: 18px;
+      border-top: 1px solid #ddd;
+      padding: 16px 0;
+      margin: 0;
     }
     .section {
-      color: #555;
-      margin: 4px 0;
+      color: #222;
+      font-weight: bold;
+      margin: 0 0 8px;
     }
     .text {
       white-space: pre-wrap;
+      margin: 0 0 12px;
     }
     .note {
       font-size: 0.9em;
@@ -52,14 +48,23 @@
       margin: 16px 0;
       color: #333;
     }
-    .score {
-      font-size: 0.85em;
-      color: #555;
-      margin-top: 8px;
+    .relevance {
+      color: #333;
+      font-size: 0.9em;
+      font-weight: bold;
+      margin: 0 0 6px;
     }
-    .match {
-      font-size: 0.85em;
-      color: #555;
+    .relevance-bar {
+      width: 100%;
+      height: 8px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .relevance-fill {
+      height: 100%;
+      background: #4a6fa5;
+      border-radius: inherit;
     }
     .contact {
       margin-top: 32px;
@@ -142,7 +147,7 @@
   </section>
 
   <script>
-    const API_BASE_URL = "https://newbie-refined-segment-lobby.trycloudflare.com";
+    const API_BASE_URL = "https://api.zeta-health.uk";
     function apiUrl(path) {
       return `${API_BASE_URL}${path}`;
     }
@@ -201,7 +206,7 @@
         return;
       }
 
-      status.textContent = `${data.count}件表示（Embedding類似度順）`;
+      status.textContent = `検索結果（${data.count}件）`;
       lastSearchContext = {
         drug: data.drug || drugQuery,
         keyword: data.keyword || keywordQuery,
@@ -224,23 +229,16 @@
         const div = document.createElement("div");
         div.className = "result";
 
-        const matches = []
-          .concat(item.heading_matches || [])
-          .concat(item.text_matches || []);
+        const relevance = toPercent(item.vector_score ?? item.score);
+        const title = item.section || item.heading || "該当項目";
 
         div.innerHTML = `
-          <div class="drug">${item.rank}. ${escapeHtml(item.drug || "")}</div>
-          <div class="section">${escapeHtml(item.section || item.heading || "")}</div>
+          <div class="section">${escapeHtml(title)}</div>
           <div class="text">${escapeHtml(item.text || "")}</div>
-          <div class="score">
-            総合 ${formatScore(item.score)}
-            / 類似度 ${formatScore(item.vector_score)}
-            / 見出し加点 ${formatScore(item.heading_bonus)}
-            / 文字一致加点 ${formatScore(item.keyword_bonus)}
+          <div class="relevance">関連度 ${relevance}%</div>
+          <div class="relevance-bar" aria-label="関連度 ${relevance}%">
+            <div class="relevance-fill" style="width: ${relevance}%"></div>
           </div>
-          ${matches.length ? `<div class="match">一致語: ${escapeHtml(matches.join("、"))}</div>` : ""}
-          ${item.fallback ? `<div class="match">${escapeHtml(item.fallback_label || "")}</div>` : ""}
-          <div class="note">source: ${escapeHtml(item.source_file || "")}</div>
         `;
 
         resultsDiv.appendChild(div);
@@ -292,9 +290,9 @@
       }
     }
 
-    function formatScore(value) {
+    function toPercent(value) {
       const number = Number(value || 0);
-      return number.toFixed(3);
+      return Math.max(0, Math.min(100, Math.round(number * 100)));
     }
 
     function escapeHtml(text) {
