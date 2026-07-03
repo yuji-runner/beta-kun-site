@@ -154,6 +154,10 @@
 
     let lastSearchContext = {};
     let contactCsrfToken = "";
+    const EMBEDDING_SCORE_WEIGHT = 0.45;
+    const BM25_SCORE_WEIGHT = 0.55;
+    const LOW_BM25_THRESHOLD = 0.05;
+    const LOW_BM25_PENALTY = 0.6;
 
     async function loadContactCsrfToken() {
       try {
@@ -206,30 +210,34 @@
         return;
       }
 
+      const rankedResults = rankResultsWithHybridScore(data.results || [], keywordQuery);
+
       status.textContent = `検索結果（${data.count}件）`;
       lastSearchContext = {
         drug: data.drug || drugQuery,
         keyword: data.keyword || keywordQuery,
-        top_results: (data.results || []).slice(0, 5).map(item => ({
+        top_results: rankedResults.slice(0, 5).map(item => ({
           rank: item.rank,
           drug: item.drug,
           section: item.section,
           heading: item.heading,
-          score: item.score,
+          score: item.hybrid_score,
+          embedding_score: item.embedding_score,
+          bm25_score: item.bm25_score,
           source_file: item.source_file
         }))
       };
 
-      if (data.results.length === 0) {
+      if (rankedResults.length === 0) {
         resultsDiv.innerHTML = "<p>該当する薬剤または結果がありません。</p>";
         return;
       }
 
-      for (const item of data.results) {
+      for (const item of rankedResults) {
         const div = document.createElement("div");
         div.className = "result";
 
-        const relevance = toPercent(item.vector_score ?? item.score);
+        const relevance = toPercent(item.hybrid_score);
         const title = item.section || item.heading || "該当項目";
 
         div.innerHTML = `
@@ -243,6 +251,121 @@
 
         resultsDiv.appendChild(div);
       }
+    }
+
+    function rankResultsWithHybridScore(results, keywordQuery) {
+      const bm25Scores = calculateBm25Scores(results, keywordQuery);
+      return results.map((item, index) => {
+        const embeddingScore = normalizeScore(item.vector_score ?? item.score);
+        const bm25Score = bm25Scores[index] || 0;
+        const baseHybridScore = (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score);
+        const hybridScore = bm25Score < LOW_BM25_THRESHOLD
+          ? baseHybridScore * LOW_BM25_PENALTY
+          : baseHybridScore;
+        return {
+          ...item,
+          embedding_score: embeddingScore,
+          bm25_score: bm25Score,
+          hybrid_score: hybridScore
+        };
+      }).sort((a, b) => b.hybrid_score - a.hybrid_score);
+    }
+
+    function calculateBm25Scores(results, keywordQuery) {
+      const queryTerms = tokenize(keywordQuery);
+      if (queryTerms.length === 0 || results.length === 0) {
+        return results.map(() => 0);
+      }
+
+      const documents = results.map(item => normalizeSearchText(getSearchableText(item)));
+      const documentLengths = documents.map(doc => Math.max(doc.length, 1));
+      const averageLength = documentLengths.reduce((sum, length) => sum + length, 0) / documentLengths.length || 1;
+      const documentFrequencies = new Map();
+
+      for (const term of queryTerms) {
+        let frequency = 0;
+        for (const doc of documents) {
+          if (doc.includes(term)) {
+            frequency += 1;
+          }
+        }
+        documentFrequencies.set(term, frequency);
+      }
+
+      const k1 = 1.5;
+      const b = 0.75;
+      const rawScores = documents.map((doc, index) => {
+        if (!doc) {
+          return 0;
+        }
+
+        return queryTerms.reduce((score, term) => {
+          const frequency = countTermOccurrences(doc, term);
+          if (frequency === 0) {
+            return score;
+          }
+          const df = documentFrequencies.get(term) || 0;
+          const idf = Math.log(1 + ((documents.length - df + 0.5) / (df + 0.5)));
+          const denominator = frequency + k1 * (1 - b + b * (documentLengths[index] / averageLength));
+          return score + idf * ((frequency * (k1 + 1)) / denominator);
+        }, 0);
+      });
+
+      const maxScore = Math.max(...rawScores, 0);
+      if (maxScore <= 0) {
+        return rawScores;
+      }
+      return rawScores.map(score => score / maxScore);
+    }
+
+    function getSearchableText(item) {
+      return [
+        item.text,
+        item.section,
+        item.drug_name,
+        item.drug,
+        item.title,
+        item.heading
+      ].filter(Boolean).join(" ");
+    }
+
+    function tokenize(text) {
+      return normalizeSearchText(text)
+        .replace(/[、。，．・/／（）()[\]【】「」『』,.;:!?！？\s]+/g, " ")
+        .split(" ")
+        .map(term => term.trim())
+        .filter(Boolean);
+    }
+
+    function normalizeSearchText(text) {
+      return (text || "").toString().toLowerCase().normalize("NFKC");
+    }
+
+    function countTermOccurrences(text, term) {
+      if (!term) {
+        return 0;
+      }
+      let count = 0;
+      let position = 0;
+      while (true) {
+        position = text.indexOf(term, position);
+        if (position === -1) {
+          return count;
+        }
+        count += 1;
+        position += term.length;
+      }
+    }
+
+    function normalizeScore(value) {
+      const number = Number(value || 0);
+      if (!Number.isFinite(number) || number <= 0) {
+        return 0;
+      }
+      if (number <= 1) {
+        return number;
+      }
+      return Math.min(1, number / 100);
     }
 
     async function submitContact() {
