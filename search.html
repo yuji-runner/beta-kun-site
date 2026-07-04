@@ -154,6 +154,7 @@
 
     let lastSearchContext = {};
     let contactCsrfToken = "";
+    let symptomDictionary = null;
     const EMBEDDING_SCORE_WEIGHT = 0.7;
     const BM25_SCORE_WEIGHT = 0.3;
     const MIN_EMBEDDING_SCORE = 0.55;
@@ -219,7 +220,8 @@
         return;
       }
 
-      const rankedResults = rankResultsWithHybridScore(data.results || [], keywordQuery);
+      const dictionary = await loadSymptomDictionary();
+      const rankedResults = rankResultsWithHybridScore(data.results || [], keywordQuery, dictionary);
 
       status.textContent = `検索結果（${rankedResults.length}件）`;
       lastSearchContext = {
@@ -234,6 +236,7 @@
           final_score: item.final_score,
           embedding_score: item.embedding_score,
           bm25_score: item.bm25_score,
+          dictionary_boost: item.dictionary_boost,
           source_file: item.source_file
         }))
       };
@@ -267,21 +270,41 @@
       }
     }
 
-    function rankResultsWithHybridScore(results, keywordQuery) {
+    async function loadSymptomDictionary() {
+      if (symptomDictionary !== null) {
+        return symptomDictionary;
+      }
+
+      try {
+        const res = await fetch("symptom_dictionary.json");
+        if (!res.ok) {
+          throw new Error("symptom dictionary unavailable");
+        }
+        symptomDictionary = await res.json();
+      } catch (error) {
+        symptomDictionary = {};
+      }
+
+      return symptomDictionary;
+    }
+
+    function rankResultsWithHybridScore(results, keywordQuery, dictionary = {}) {
       const bm25Scores = calculateBm25Scores(results, keywordQuery);
       return results.map((item, index) => {
         const embeddingScore = normalizeScore(item.vector_score ?? item.score);
         const bm25Score = bm25Scores[index] || 0;
         const symptomBoost = calculateSymptomBoost(item, keywordQuery);
+        const dictionaryBoost = calculateDictionaryBoost(item, keywordQuery, dictionary);
         const finalScore = Math.min(
           1,
-          (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score) + symptomBoost
+          (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score) + symptomBoost + dictionaryBoost
         );
         return {
           ...item,
           embedding_score: embeddingScore,
           bm25_score: bm25Score,
           symptom_boost: symptomBoost,
+          dictionary_boost: dictionaryBoost,
           final_score: finalScore,
           hybrid_score: finalScore
         };
@@ -373,6 +396,23 @@
       }
 
       return Math.min(MAX_SYMPTOM_BOOST, boost);
+    }
+
+    function calculateDictionaryBoost(item, keywordQuery, dictionary) {
+      const dictionaryEntry = dictionary[normalizeSearchText(keywordQuery)];
+      if (!dictionaryEntry) {
+        return 0;
+      }
+
+      const documentText = normalizeSearchText(getSearchableText(item));
+      let boost = 0;
+      for (const [term, score] of Object.entries(dictionaryEntry)) {
+        if (documentText.includes(normalizeSearchText(term))) {
+          boost = Math.max(boost, normalizeScore(score));
+        }
+      }
+
+      return boost;
     }
 
     function getSearchableText(item) {
