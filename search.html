@@ -154,10 +154,11 @@
 
     let lastSearchContext = {};
     let contactCsrfToken = "";
-    const EMBEDDING_SCORE_WEIGHT = 0.45;
-    const BM25_SCORE_WEIGHT = 0.55;
-    const LOW_BM25_THRESHOLD = 0.05;
-    const LOW_BM25_PENALTY = 0.6;
+    const EMBEDDING_SCORE_WEIGHT = 0.6;
+    const BM25_SCORE_WEIGHT = 0.4;
+    const MIN_FINAL_SCORE = 0.50;
+    const MIN_EMBEDDING_SCORE_WITHOUT_BM25 = 0.80;
+    const DEBUG_SEARCH_SCORES = new URLSearchParams(window.location.search).has("debug");
 
     async function loadContactCsrfToken() {
       try {
@@ -212,7 +213,7 @@
 
       const rankedResults = rankResultsWithHybridScore(data.results || [], keywordQuery);
 
-      status.textContent = `検索結果（${data.count}件）`;
+      status.textContent = `検索結果（${rankedResults.length}件）`;
       lastSearchContext = {
         drug: data.drug || drugQuery,
         keyword: data.keyword || keywordQuery,
@@ -221,7 +222,8 @@
           drug: item.drug,
           section: item.section,
           heading: item.heading,
-          score: item.hybrid_score,
+          score: item.final_score,
+          final_score: item.final_score,
           embedding_score: item.embedding_score,
           bm25_score: item.bm25_score,
           source_file: item.source_file
@@ -237,8 +239,11 @@
         const div = document.createElement("div");
         div.className = "result";
 
-        const relevance = toPercent(item.hybrid_score);
+        const relevance = toPercent(item.final_score);
         const title = item.section || item.heading || "該当項目";
+        const debugScores = DEBUG_SEARCH_SCORES
+          ? `<div class="note">Embedding ${formatScore(item.embedding_score)} / BM25 ${formatScore(item.bm25_score)} / final_score ${formatScore(item.final_score)}</div>`
+          : "";
 
         div.innerHTML = `
           <div class="section">${escapeHtml(title)}</div>
@@ -247,6 +252,7 @@
           <div class="relevance-bar" aria-label="関連度 ${relevance}%">
             <div class="relevance-fill" style="width: ${relevance}%"></div>
           </div>
+          ${debugScores}
         `;
 
         resultsDiv.appendChild(div);
@@ -258,17 +264,23 @@
       return results.map((item, index) => {
         const embeddingScore = normalizeScore(item.vector_score ?? item.score);
         const bm25Score = bm25Scores[index] || 0;
-        const baseHybridScore = (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score);
-        const hybridScore = bm25Score < LOW_BM25_THRESHOLD
-          ? baseHybridScore * LOW_BM25_PENALTY
-          : baseHybridScore;
+        const finalScore = (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score);
         return {
           ...item,
           embedding_score: embeddingScore,
           bm25_score: bm25Score,
-          hybrid_score: hybridScore
+          final_score: finalScore,
+          hybrid_score: finalScore
         };
-      }).sort((a, b) => b.hybrid_score - a.hybrid_score);
+      }).filter(item => {
+        if (item.final_score < MIN_FINAL_SCORE) {
+          return false;
+        }
+        if (item.bm25_score === 0 && item.embedding_score < MIN_EMBEDDING_SCORE_WITHOUT_BM25) {
+          return false;
+        }
+        return true;
+      }).sort((a, b) => b.final_score - a.final_score);
     }
 
     function calculateBm25Scores(results, keywordQuery) {
@@ -416,6 +428,14 @@
     function toPercent(value) {
       const number = Number(value || 0);
       return Math.max(0, Math.min(100, Math.round(number * 100)));
+    }
+
+    function formatScore(value) {
+      const number = Number(value || 0);
+      if (!Number.isFinite(number)) {
+        return "0.000";
+      }
+      return number.toFixed(3);
     }
 
     function escapeHtml(text) {
