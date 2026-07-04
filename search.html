@@ -154,10 +154,16 @@
 
     let lastSearchContext = {};
     let contactCsrfToken = "";
-    const EMBEDDING_SCORE_WEIGHT = 0.6;
-    const BM25_SCORE_WEIGHT = 0.4;
-    const MIN_FINAL_SCORE = 0.50;
-    const MIN_EMBEDDING_SCORE_WITHOUT_BM25 = 0.80;
+    const EMBEDDING_SCORE_WEIGHT = 0.7;
+    const BM25_SCORE_WEIGHT = 0.3;
+    const MIN_EMBEDDING_SCORE = 0.50;
+    const MAX_SYMPTOM_BOOST = 0.05;
+    const SYMPTOM_BOOST_GROUPS = [
+      {
+        queryTerms: ["腹", "お腹", "胃", "みぞおち", "上腹", "上腹部", "痛", "痛み", "痛い"],
+        documentTerms: ["腹", "腹痛", "腹部", "上腹", "上腹部", "胃", "胃腸", "消化器", "膵", "膵炎", "悪心", "嘔吐", "下痢"]
+      }
+    ];
     const DEBUG_SEARCH_SCORES = new URLSearchParams(window.location.search).has("debug");
 
     async function loadContactCsrfToken() {
@@ -242,7 +248,7 @@
         const relevance = toPercent(item.final_score);
         const title = item.section || item.heading || "該当項目";
         const debugScores = DEBUG_SEARCH_SCORES
-          ? `<div class="note">Embedding ${formatScore(item.embedding_score)} / BM25 ${formatScore(item.bm25_score)} / final_score ${formatScore(item.final_score)}</div>`
+          ? `<div class="note">Embedding ${formatScore(item.embedding_score)} / BM25 ${formatScore(item.bm25_score)} / symptom ${formatScore(item.symptom_boost)} / final_score ${formatScore(item.final_score)}</div>`
           : "";
 
         div.innerHTML = `
@@ -264,23 +270,21 @@
       return results.map((item, index) => {
         const embeddingScore = normalizeScore(item.vector_score ?? item.score);
         const bm25Score = bm25Scores[index] || 0;
-        const finalScore = (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score);
+        const symptomBoost = calculateSymptomBoost(item, keywordQuery);
+        const finalScore = Math.min(
+          1,
+          (EMBEDDING_SCORE_WEIGHT * embeddingScore) + (BM25_SCORE_WEIGHT * bm25Score) + symptomBoost
+        );
         return {
           ...item,
           embedding_score: embeddingScore,
           bm25_score: bm25Score,
+          symptom_boost: symptomBoost,
           final_score: finalScore,
           hybrid_score: finalScore
         };
-      }).filter(item => {
-        if (item.final_score < MIN_FINAL_SCORE) {
-          return false;
-        }
-        if (item.bm25_score === 0 && item.embedding_score < MIN_EMBEDDING_SCORE_WITHOUT_BM25) {
-          return false;
-        }
-        return true;
-      }).sort((a, b) => b.final_score - a.final_score);
+      }).filter(item => item.embedding_score >= MIN_EMBEDDING_SCORE)
+        .sort((a, b) => b.final_score - a.final_score);
     }
 
     function calculateBm25Scores(results, keywordQuery) {
@@ -328,6 +332,28 @@
         return rawScores;
       }
       return rawScores.map(score => score / maxScore);
+    }
+
+    function calculateSymptomBoost(item, keywordQuery) {
+      const queryText = normalizeSearchText(keywordQuery);
+      const documentText = normalizeSearchText(getSearchableText(item));
+      let boost = 0;
+
+      for (const group of SYMPTOM_BOOST_GROUPS) {
+        const queryMatched = group.queryTerms.some(term => queryText.includes(normalizeSearchText(term)));
+        if (!queryMatched) {
+          continue;
+        }
+
+        const documentMatches = group.documentTerms.filter(term => documentText.includes(normalizeSearchText(term)));
+        if (documentMatches.length === 0) {
+          continue;
+        }
+
+        boost += Math.min(MAX_SYMPTOM_BOOST, 0.02 + (documentMatches.length * 0.01));
+      }
+
+      return Math.min(MAX_SYMPTOM_BOOST, boost);
     }
 
     function getSearchableText(item) {
