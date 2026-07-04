@@ -156,7 +156,9 @@
     let contactCsrfToken = "";
     const EMBEDDING_SCORE_WEIGHT = 0.7;
     const BM25_SCORE_WEIGHT = 0.3;
-    const MIN_EMBEDDING_SCORE = 0.50;
+    const MIN_EMBEDDING_SCORE = 0.55;
+    const MIN_EMBEDDING_SCORE_WITHOUT_BM25 = 0.65;
+    const MIN_EMBEDDING_SCORE_WITHOUT_TEXT_SIGNAL = 0.80;
     const MAX_SYMPTOM_BOOST = 0.05;
     const SYMPTOM_BOOST_GROUPS = [
       {
@@ -283,8 +285,25 @@
           final_score: finalScore,
           hybrid_score: finalScore
         };
-      }).filter(item => item.embedding_score >= MIN_EMBEDDING_SCORE)
+      }).filter(isRelevantSearchResult)
         .sort((a, b) => b.final_score - a.final_score);
+    }
+
+    function isRelevantSearchResult(item) {
+      if (item.embedding_score < MIN_EMBEDDING_SCORE) {
+        return false;
+      }
+      if (item.bm25_score === 0 && item.embedding_score < MIN_EMBEDDING_SCORE_WITHOUT_BM25) {
+        return false;
+      }
+      if (
+        item.bm25_score === 0 &&
+        item.symptom_boost === 0 &&
+        item.embedding_score < MIN_EMBEDDING_SCORE_WITHOUT_TEXT_SIGNAL
+      ) {
+        return false;
+      }
+      return true;
     }
 
     function calculateBm25Scores(results, keywordQuery) {
