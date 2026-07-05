@@ -52,19 +52,45 @@
       color: #333;
       font-size: 0.9em;
       font-weight: bold;
-      margin: 0 0 6px;
+      margin: 0 0 18px;
+    }
+    .relevance-bar-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .relevance-end-label {
+      position: absolute;
+      top: -18px;
+      right: 0;
+      color: #666;
+      font-size: 0.75em;
+      line-height: 1;
+      white-space: nowrap;
     }
     .relevance-bar {
+      position: relative;
       width: 100%;
       height: 8px;
       background: #e5e7eb;
       border-radius: 999px;
-      overflow: hidden;
+      overflow: visible;
+    }
+    .relevance-bar::after {
+      content: "";
+      position: absolute;
+      top: -3px;
+      right: 0;
+      width: 2px;
+      height: 14px;
+      background: #333;
+      border-radius: 999px;
+      opacity: 0.45;
     }
     .relevance-fill {
       height: 100%;
       background: #4a6fa5;
       border-radius: inherit;
+      max-width: 100%;
     }
     .contact {
       margin-top: 32px;
@@ -160,6 +186,7 @@
     const MIN_EMBEDDING_SCORE = 0.55;
     const MIN_EMBEDDING_SCORE_WITHOUT_BM25 = 0.65;
     const MIN_EMBEDDING_SCORE_WITHOUT_TEXT_SIGNAL = 0.80;
+    const MIN_DISPLAY_SCORE = 0.55;
     const MAX_SYMPTOM_BOOST = 0.05;
     const SYMPTOM_BOOST_GROUPS = [
       {
@@ -259,9 +286,12 @@
         div.innerHTML = `
           <div class="section">${escapeHtml(title)}</div>
           <div class="text">${escapeHtml(item.text || "")}</div>
-          <div class="relevance">関連度 ${relevance}%</div>
-          <div class="relevance-bar" aria-label="関連度 ${relevance}%">
-            <div class="relevance-fill" style="width: ${relevance}%"></div>
+          <div class="relevance">一致度 ${relevance}%</div>
+          <div class="relevance-bar-wrap">
+            <span class="relevance-end-label" aria-hidden="true">100%</span>
+            <div class="relevance-bar" aria-label="一致度 ${relevance}%、右端が100%">
+              <div class="relevance-fill" style="width: ${relevance}%"></div>
+            </div>
           </div>
           ${debugScores}
         `;
@@ -512,7 +542,8 @@
 
     function toPercent(value) {
       const number = Number(value || 0);
-      return Math.max(0, Math.min(100, Math.round(number * 100)));
+      const displayScore = (number - MIN_DISPLAY_SCORE) / (1 - MIN_DISPLAY_SCORE);
+      return Math.max(0, Math.min(100, Math.round(displayScore * 100)));
     }
 
     function formatScore(value) {
