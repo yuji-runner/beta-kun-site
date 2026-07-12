@@ -37,6 +37,21 @@
       white-space: pre-wrap;
       margin: 0 0 12px;
     }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 12px;
+      font-size: 0.92em;
+    }
+    th, td {
+      border-top: 1px solid #ddd;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f6f8fa;
+    }
     .note {
       font-size: 0.9em;
       color: #666;
@@ -120,6 +135,13 @@
 
   <label>キーワード</label>
   <input id="keywordInput" placeholder="例：むくみ、だるい、尿が茶色い">
+
+  <label>検索方針</label>
+  <select id="searchFocusInput">
+    <option value="auto">自動</option>
+    <option value="safety">安全性優先</option>
+    <option value="dosage">用量優先</option>
+  </select>
 
   <button onclick="search()">検索</button>
 
@@ -211,6 +233,7 @@
     async function search() {
       const drugQuery = document.getElementById("drugInput").value.trim();
       const keywordQuery = document.getElementById("keywordInput").value.trim();
+      const searchFocus = document.getElementById("searchFocusInput").value || "auto";
       const resultsDiv = document.getElementById("results");
       const status = document.getElementById("status");
 
@@ -235,6 +258,7 @@
           body: JSON.stringify({
             drug: drugQuery,
             keyword: keywordQuery,
+            search_focus: searchFocus,
             limit: 20
           })
         });
@@ -248,17 +272,27 @@
       }
 
       const dictionary = await loadSymptomDictionary();
-      const rankedResults = rankResultsWithHybridScore(data.results || [], keywordQuery, dictionary);
+      const rankedResults = data.search_mode === "combined"
+        ? rankCombinedResults(data.results || [])
+        : rankResultsWithHybridScore(data.results || [], keywordQuery, dictionary);
 
-      status.textContent = `検索結果（${rankedResults.length}件）`;
+      const modeNote = data.fallback_to_legacy
+        ? " / 統合検索を使用できないため従来検索で表示"
+        : ` / ${data.search_mode || "legacy"}`;
+      status.textContent = `検索結果（${rankedResults.length}件）${modeNote}`;
       lastSearchContext = {
         drug: data.drug || drugQuery,
         keyword: data.keyword || keywordQuery,
+        search_mode: data.search_mode || "legacy",
+        search_focus: data.search_focus || searchFocus,
+        fallback_to_legacy: Boolean(data.fallback_to_legacy),
         top_results: rankedResults.slice(0, 5).map(item => ({
           rank: item.rank,
           drug: item.drug,
           section: item.section,
           heading: item.heading,
+          category: item.category,
+          patient_label: item.patient_label,
           score: item.final_score,
           final_score: item.final_score,
           embedding_score: item.embedding_score,
@@ -279,13 +313,22 @@
 
         const relevance = toPercent(item.final_score);
         const title = item.section || item.heading || "該当項目";
+        const metaParts = [
+          item.drug,
+          item.category,
+          item.patient_label,
+          item.source_file
+        ].filter(Boolean).map(escapeHtml);
+        const tableHtml = renderStructuredTable(item.structured_table);
         const debugScores = DEBUG_SEARCH_SCORES
-          ? `<div class="note">Embedding ${formatScore(item.embedding_score)} / BM25 ${formatScore(item.bm25_score)} / symptom ${formatScore(item.symptom_boost)} / final_score ${formatScore(item.final_score)}</div>`
+          ? `<div class="note">base ${formatScore(item.base_score ?? item.vector_score ?? item.embedding_score)} / intent ${formatScore(item.intent_boost)} / category ${formatScore(item.category_boost)} / BM25 ${formatScore(item.bm25_score)} / final_score ${formatScore(item.final_score)} / intent ${escapeHtml(item.detected_intent || "")} / focus ${escapeHtml(item.search_focus || "")}</div>`
           : "";
 
         div.innerHTML = `
           <div class="section">${escapeHtml(title)}</div>
+          ${metaParts.length ? `<div class="note">${metaParts.join(" / ")}</div>` : ""}
           <div class="text">${escapeHtml(item.text || "")}</div>
+          ${tableHtml}
           <div class="relevance">一致度 ${relevance}%</div>
           <div class="relevance-bar-wrap">
             <span class="relevance-end-label" aria-hidden="true">100%</span>
@@ -298,6 +341,20 @@
 
         resultsDiv.appendChild(div);
       }
+    }
+
+    function rankCombinedResults(results) {
+      return results.map((item, index) => ({
+        ...item,
+        rank: item.rank || index + 1,
+        base_score: normalizeScore(item.base_score ?? item.vector_score ?? item.score),
+        embedding_score: normalizeScore(item.base_score ?? item.vector_score ?? item.score),
+        final_score: normalizeScore(item.final_score ?? item.score),
+        bm25_score: 0,
+        symptom_boost: 0,
+        dictionary_boost: 0,
+        hybrid_score: normalizeScore(item.final_score ?? item.score)
+      })).sort((a, b) => b.final_score - a.final_score);
     }
 
     async function loadSymptomDictionary() {
@@ -493,6 +550,38 @@
         return number;
       }
       return Math.min(1, number / 100);
+    }
+
+    function renderStructuredTable(table) {
+      if (!table) {
+        return "";
+      }
+      if (typeof table === "string") {
+        return `<pre class="note">${escapeHtml(table)}</pre>`;
+      }
+      const title = table.table_title || table.title || "";
+      const rows = Array.isArray(table.rows) ? table.rows : [];
+      const columns = Array.isArray(table.columns) ? table.columns : [];
+      const notes = Array.isArray(table.notes) ? table.notes : [];
+      if (!rows.length || !columns.length) {
+        return `<pre class="note">${escapeHtml(JSON.stringify(table, null, 2))}</pre>`;
+      }
+      const head = columns.map(col => `<th>${escapeHtml(col)}</th>`).join("");
+      const body = rows.map(row => {
+        const cells = columns.map(col => `<td>${escapeHtml(row[col] ?? "")}</td>`).join("");
+        return `<tr>${cells}</tr>`;
+      }).join("");
+      const noteHtml = notes.length
+        ? `<div class="note">${notes.map(escapeHtml).join("<br>")}</div>`
+        : "";
+      return `
+        <div class="note">${escapeHtml(title)}</div>
+        <table>
+          <thead><tr>${head}</tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+        ${noteHtml}
+      `;
     }
 
     async function submitContact() {
