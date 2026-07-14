@@ -131,6 +131,21 @@
       margin: 8px 0;
       color: #5f1111;
     }
+    .formulation-choice {
+      border-left: 4px solid #4a6fa5;
+      background: #f4f7fb;
+      padding: 10px 12px;
+      margin: 12px 0;
+    }
+    .formulation-choice-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .formulation-choice-buttons button {
+      padding: 8px 12px;
+    }
     .relevance {
       color: #333;
       font-size: 0.9em;
@@ -206,10 +221,11 @@
 
   <label>検索方針</label>
   <select id="searchFocusInput">
-    <option value="auto">自動</option>
-    <option value="safety">安全性優先</option>
-    <option value="dosage">用量優先</option>
+    <option value="auto">すべてから検索（おすすめ）</option>
+    <option value="safety">副作用・警告を中心に検索</option>
+    <option value="dosage">用法・用量を中心に検索</option>
   </select>
+  <p class="note">検索対象を絞りたい場合に選択します。迷った場合は『すべてから検索』をご利用ください。</p>
 
   <button onclick="search()">検索</button>
 
@@ -319,6 +335,44 @@
       invalid_input: "入力内容を確認してください"
     };
 
+    function normalizeTulobuterolQuery(value) {
+      return String(value || "").normalize("NFKC").replace(/\s+/g, "");
+    }
+
+    function selectTulobuterolForm(value) {
+      document.getElementById("drugInput").value = value;
+      document.getElementById("status").textContent = "剤形を選択しました。必要に応じてキーワードを確認し、検索してください。";
+      document.getElementById("results").innerHTML = "";
+    }
+
+    function escapeJsString(value) {
+      return String(value || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+    }
+
+    function getTulobuterolFormulationOptions(options) {
+      return Array.isArray(options) && options.length ? options : [
+        {value: "ツロブテロールテープ", label: "テープ（貼付剤）"},
+        {value: "ツロブテロールドライシロップ0.1%", label: "ドライシロップ0.1%"},
+        {value: "ツロブテロール錠", label: "錠剤"}
+      ];
+    }
+
+    function renderTulobuterolFormChoice(resultsDiv, status, options, message) {
+      const buttons = getTulobuterolFormulationOptions(options).map(option => `
+        <button type="button" onclick="selectTulobuterolForm('${escapeJsString(option.value)}')">${escapeHtml(option.label)}</button>
+      `).join("");
+      status.textContent = "";
+      resultsDiv.innerHTML = `
+        <div class="formulation-choice">
+          <div class="section">${escapeHtml(message || "ツロブテロールの剤形を選んでください")}</div>
+          <div class="note">錠剤、ドライシロップ、テープは添付文書が異なるため、剤形を指定してから検索してください。</div>
+          <div class="formulation-choice-buttons">
+            ${buttons}
+          </div>
+        </div>
+      `;
+    }
+
     async function loadContactCsrfToken() {
       try {
         const res = await fetch(apiUrl("/api/contact/csrf"));
@@ -337,6 +391,8 @@
       const searchFocus = document.getElementById("searchFocusInput").value || "auto";
       const resultsDiv = document.getElementById("results");
       const status = document.getElementById("status");
+      const doseResults = document.getElementById("doseResults");
+      const doseStatus = document.getElementById("doseStatus");
 
       resultsDiv.innerHTML = "";
 
@@ -348,7 +404,15 @@
         status.textContent = "症状キーワードを入力してください。";
         return;
       }
+      if (normalizeTulobuterolQuery(drugQuery) === "ツロブテロール") {
+        doseResults.innerHTML = "";
+        doseStatus.textContent = "";
+        renderTulobuterolFormChoice(resultsDiv, status);
+        return;
+      }
 
+      doseResults.innerHTML = "";
+      doseStatus.textContent = "";
       status.textContent = "検索中...";
 
       let data;
@@ -364,6 +428,10 @@
           })
         });
         data = await res.json();
+        if (res.ok && data.status === "needs_formulation") {
+          renderTulobuterolFormChoice(resultsDiv, status, data.formulation_options, data.message);
+          return;
+        }
         if (!res.ok || data.status !== "ok") {
           throw new Error(data.message || "検索に失敗しました。");
         }
@@ -450,6 +518,8 @@
       const monthsValue = document.getElementById("doseMonthsInput").value.trim();
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
+      const searchStatus = document.getElementById("status");
+      const searchResults = document.getElementById("results");
 
       results.innerHTML = "";
 
@@ -463,23 +533,28 @@
         return;
       }
 
+      searchResults.innerHTML = "";
+      searchStatus.textContent = "";
       status.textContent = "年齢別用量を確認中...";
 
       let data;
       try {
-        const params = new URLSearchParams({
-          ingredient_name: ingredientName,
-          years: yearsValue,
-          months: monthsValue
+        const res = await fetch(apiUrl("/api/dose-rule/evaluate"), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            ingredient_name: ingredientName,
+            years: yearsValue,
+            months: monthsValue
+          })
         });
-        const res = await fetch(apiUrl(`/api/dose-rule/evaluate?${params.toString()}`));
         data = await res.json();
         if (!res.ok) {
           throw new Error(data.message || data.error || "用量APIの確認に失敗しました。");
         }
       } catch (error) {
         status.textContent = "";
-        results.innerHTML = `<div class="dose-error">${escapeHtml(error.message || "用量APIの確認に失敗しました。")}</div>`;
+        results.innerHTML = `<div class="dose-error">用量情報を取得できませんでした。しばらくしてから、もう一度お試しください。</div>`;
         return;
       }
 
