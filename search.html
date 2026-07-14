@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>β君 添付文書検索</title>
   <style>
     body {
@@ -62,6 +63,73 @@
       padding: 10px 12px;
       margin: 16px 0;
       color: #333;
+    }
+    .dose-panel {
+      border: 1px solid #d9e2ef;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 18px 0;
+      background: #fbfdff;
+    }
+    .dose-panel h2 {
+      margin: 0 0 10px;
+      font-size: 1.15em;
+    }
+    .dose-age-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .dose-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 4px 0 12px;
+    }
+    .dose-result {
+      border-top: 1px solid #d9e2ef;
+      margin-top: 12px;
+      padding-top: 12px;
+    }
+    .dose-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 12px 0;
+      background: #fff;
+    }
+    .dose-card h3 {
+      margin: 0 0 8px;
+      font-size: 1em;
+    }
+    .dose-field {
+      margin: 6px 0;
+    }
+    .dose-field strong {
+      display: inline-block;
+      min-width: 9em;
+      color: #333;
+    }
+    .dose-source {
+      white-space: pre-wrap;
+      background: #f8f9fb;
+      border-left: 3px solid #b8c7db;
+      padding: 8px 10px;
+      margin: 8px 0;
+    }
+    .dose-warning {
+      border-left: 4px solid #b7791f;
+      background: #fff8e8;
+      padding: 8px 10px;
+      margin: 8px 0;
+    }
+    .dose-error {
+      border-left: 4px solid #b00020;
+      background: #fff5f5;
+      padding: 8px 10px;
+      margin: 8px 0;
+      color: #5f1111;
     }
     .relevance {
       color: #333;
@@ -145,6 +213,30 @@
 
   <button onclick="search()">検索</button>
 
+  <section class="dose-panel" aria-labelledby="doseRuleTitle">
+    <h2 id="doseRuleTitle">年齢別・小児用量表示</h2>
+    <p class="note">
+      成分名と年齢から、承認済み添付文書ルールに該当する剤形・規格・適応症別の用量を表示します。
+      参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。
+    </p>
+    <div class="dose-age-grid">
+      <div>
+        <label>年</label>
+        <input id="doseYearsInput" type="number" min="0" step="1" inputmode="numeric" pattern="[0-9]*" placeholder="例：3">
+      </div>
+      <div>
+        <label>か月</label>
+        <input id="doseMonthsInput" type="number" min="0" max="11" step="1" inputmode="numeric" pattern="[0-9]*" value="0">
+      </div>
+    </div>
+    <div class="dose-actions">
+      <button type="button" onclick="evaluateDoseRule()">年齢別用量を確認</button>
+      <span class="note">剤形・規格・適応症は入力せず、該当候補を一覧表示します。</span>
+    </div>
+    <div id="doseStatus" class="note">成分名と年齢を入力してください。</div>
+    <div id="doseResults" class="dose-result"></div>
+  </section>
+
   <div class="notice">
     添付文書上、この薬ではこのような副作用が報告されています。<br>
     この症状と関連する可能性がある項目です。<br>
@@ -217,6 +309,15 @@
       }
     ];
     const DEBUG_SEARCH_SCORES = new URLSearchParams(window.location.search).has("debug");
+    const DOSE_STATUS_LABELS = {
+      matched: "添付文書上の該当用量",
+      matched_multiple: "添付文書上の該当候補",
+      multiple_matches: "条件を特定できない候補があります",
+      insufficient_input: "入力情報が不足しています",
+      no_approved_rule: "承認済みルールがありません",
+      out_of_scope: "添付文書上の該当用量なし",
+      invalid_input: "入力内容を確認してください"
+    };
 
     async function loadContactCsrfToken() {
       try {
@@ -341,6 +442,200 @@
 
         resultsDiv.appendChild(div);
       }
+    }
+
+    async function evaluateDoseRule() {
+      const ingredientName = document.getElementById("drugInput").value.trim();
+      const yearsValue = document.getElementById("doseYearsInput").value.trim();
+      const monthsValue = document.getElementById("doseMonthsInput").value.trim();
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+
+      results.innerHTML = "";
+
+      if (!ingredientName) {
+        status.textContent = "成分名を入力してください。";
+        return;
+      }
+      if (yearsValue === "") {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">年齢の『年』を入力してください。0歳の場合は0を入力してください。</div>`;
+        return;
+      }
+
+      status.textContent = "年齢別用量を確認中...";
+
+      let data;
+      try {
+        const params = new URLSearchParams({
+          ingredient_name: ingredientName,
+          years: yearsValue,
+          months: monthsValue
+        });
+        const res = await fetch(apiUrl(`/api/dose-rule/evaluate?${params.toString()}`));
+        data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || data.error || "用量APIの確認に失敗しました。");
+        }
+      } catch (error) {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">${escapeHtml(error.message || "用量APIの確認に失敗しました。")}</div>`;
+        return;
+      }
+
+      renderDoseRuleResult(data);
+    }
+
+    function renderDoseRuleResult(data) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      const statusLabel = DOSE_STATUS_LABELS[data.status] || data.status || "判定結果";
+      const matchedRules = Array.isArray(data.matched_rules) ? data.matched_rules : [];
+      const nearestRules = Array.isArray(data.nearest_age_rules) ? data.nearest_age_rules : [];
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      const ambiguity = normalizeList(data.ambiguity);
+      const missingInputs = normalizeList(data.missing_inputs);
+
+      status.textContent = statusLabel;
+
+      const parts = [];
+      parts.push(`<h3>${escapeHtml(statusLabel)}</h3>`);
+
+      if (data.input_age_months !== undefined && data.input_age_months !== null) {
+        parts.push(`<div class="note">入力年齢: ${escapeHtml(formatAgeMonths(data.input_age_months))}</div>`);
+      }
+
+      if (data.match_summary) {
+        parts.push(`<p><strong>${escapeHtml(data.match_summary)}</strong></p>`);
+      }
+
+      if (missingInputs.length) {
+        parts.push(renderDoseMessageList("不足している入力", missingInputs));
+      }
+      if (ambiguity.length) {
+        parts.push(renderDoseMessageList("確認が必要な点", ambiguity));
+      }
+      if (warnings.length) {
+        parts.push(renderDoseMessageList("注意", warnings, "dose-warning"));
+      }
+
+      if (matchedRules.length) {
+        matchedRules.forEach((rule, index) => {
+          parts.push(renderDoseRuleCard(rule, index + 1, false));
+        });
+      }
+
+      if (nearestRules.length) {
+        const nearestSummary = data.nearest_boundary_months !== undefined && data.nearest_boundary_months !== null
+          ? `参考として、最も近い年齢区分は ${escapeHtml(formatAgeMonths(data.nearest_boundary_months))} 付近です。`
+          : "参考として、最も近い年齢区分を表示します。";
+        parts.push(`<div class="dose-warning">${nearestSummary}<br>これは入力年齢への確定用量ではありません。</div>`);
+        nearestRules.forEach((rule, index) => {
+          parts.push(renderDoseRuleCard(rule, index + 1, true));
+        });
+      }
+
+      if (!matchedRules.length && !nearestRules.length && !ambiguity.length && !missingInputs.length) {
+        parts.push("<p>表示できる候補はありません。</p>");
+      }
+
+      results.innerHTML = parts.join("");
+    }
+
+    function renderDoseRuleCard(rule, index, informationalOnly) {
+      const title = rule.display_name || rule.age_condition_text || rule.age_condition || `候補${index}`;
+      const productMappings = Array.isArray(rule.product_mappings) ? rule.product_mappings : [];
+      const productHtml = productMappings.length
+        ? renderProductMappings(productMappings)
+        : [
+            renderDoseField("販売名", rule.product_name || rule.product_names),
+            renderDoseField("剤形", rule.dosage_form),
+            renderDoseField("製品規格", rule.product_strength || rule.strength),
+            renderDoseField("1回使用量", rule.units_per_dose || rule.formulation_conversion || rule.formulation_conversion_text)
+          ].join("");
+      const informationalNote = informationalOnly
+        ? `<div class="dose-warning">参考情報です。この入力年齢に対する該当用量として表示していません。</div>`
+        : "";
+
+      return `
+        <div class="dose-card">
+          <h3>${escapeHtml(title)}</h3>
+          ${informationalNote}
+          ${renderDoseField("適応症", rule.indication || rule.indication_scope)}
+          ${renderDoseField("対象年齢区分", rule.age_condition_text || rule.age_condition)}
+          ${renderDoseField("添付文書上の用量", rule.dose_expression_text || rule.prescribed_dose || rule.dose_per_administration)}
+          ${renderDoseField("1日回数", rule.administrations_per_day)}
+          ${renderDoseField("投与時点", rule.timing)}
+          ${renderDoseField("投与経路", rule.route)}
+          ${productHtml}
+          ${renderDoseField("製剤換算", rule.formulation_conversion)}
+          ${renderDoseField("最大量", rule.max_dose)}
+          ${renderDoseSource("添付文書原文", rule.source_text)}
+          ${renderDoseSource("関連する注意", rule.related_precaution_text)}
+          <div class="note">薬剤師確認済み</div>
+        </div>
+      `;
+    }
+
+    function renderProductMappings(productMappings) {
+      const rows = productMappings.map(item => {
+        const units = item.units_per_dose || "製品規格から使用量は一意に確定できません";
+        return `<tr>
+          <td>${escapeHtml(item.product_name || "")}</td>
+          <td>${escapeHtml(item.dosage_form || "")}</td>
+          <td>${escapeHtml(item.product_strength || item.strength || "")}</td>
+          <td>${escapeHtml(units)}</td>
+        </tr>`;
+      }).join("");
+      return `
+        <div class="dose-field"><strong>対応製品</strong></div>
+        <table>
+          <thead><tr><th>製品名</th><th>剤形</th><th>製品規格</th><th>1回使用量</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    function renderDoseField(label, value) {
+      if (value === undefined || value === null || value === "") {
+        return "";
+      }
+      return `<div class="dose-field"><strong>${escapeHtml(label)}</strong>${escapeHtml(value)}</div>`;
+    }
+
+    function renderDoseSource(label, value) {
+      if (value === undefined || value === null || value === "") {
+        return "";
+      }
+      return `<div class="dose-field"><strong>${escapeHtml(label)}</strong><div class="dose-source">${escapeHtml(value)}</div></div>`;
+    }
+
+    function renderDoseMessageList(label, values, className = "note") {
+      if (!values.length) {
+        return "";
+      }
+      const items = values.map(value => `<li>${escapeHtml(value)}</li>`).join("");
+      return `<div class="${className}"><strong>${escapeHtml(label)}</strong><ul>${items}</ul></div>`;
+    }
+
+    function normalizeList(value) {
+      if (!value) {
+        return [];
+      }
+      if (Array.isArray(value)) {
+        return value.filter(item => item !== undefined && item !== null && item !== "");
+      }
+      return [value];
+    }
+
+    function formatAgeMonths(totalMonths) {
+      const number = Number(totalMonths);
+      if (!Number.isFinite(number) || number < 0) {
+        return "";
+      }
+      const years = Math.floor(number / 12);
+      const months = number % 12;
+      return `${years}歳${months}か月`;
     }
 
     function rankCombinedResults(results) {
