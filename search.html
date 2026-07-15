@@ -23,6 +23,37 @@
       padding: 10px 18px;
       font-size: 16px;
       cursor: pointer;
+      min-height: 44px;
+    }
+    .tab-list {
+      display: flex;
+      gap: 8px;
+      margin: 18px 0;
+      border-bottom: 3px solid #1f5f99;
+    }
+    .tab-button {
+      border: 2px solid #d6dde8;
+      border-bottom: none;
+      background: #f7f9fc;
+      color: #18324a;
+      padding: 10px 18px;
+      min-height: 44px;
+      font-weight: bold;
+    }
+    .tab-button:hover {
+      background: #edf3f9;
+    }
+    .tab-button.active {
+      background: #1f5f99;
+      border-color: #1f5f99;
+      color: #fff;
+      box-shadow: inset 0 -4px 0 #0f3558;
+    }
+    .tab-panel {
+      display: none;
+    }
+    .tab-panel.active {
+      display: block;
     }
     .result {
       border-top: 1px solid #ddd;
@@ -68,7 +99,7 @@
       border: 1px solid #d9e2ef;
       border-radius: 8px;
       padding: 14px 16px;
-      margin: 18px 0;
+      margin: 0 0 18px;
       background: #fbfdff;
     }
     .dose-panel h2 {
@@ -91,6 +122,18 @@
       border-top: 1px solid #d9e2ef;
       margin-top: 12px;
       padding-top: 12px;
+    }
+    .dose-summary {
+      border-left: 5px solid #1f5f99;
+      background: #eef6ff;
+      padding: 10px 12px;
+      margin: 8px 0 12px;
+      font-weight: bold;
+    }
+    .dose-followup {
+      border-top: 1px solid #d9e2ef;
+      margin-top: 14px;
+      padding-top: 10px;
     }
     .dose-card {
       border: 1px solid #ddd;
@@ -202,6 +245,28 @@
     .contact-status {
       font-weight: bold;
     }
+    @media (max-width: 520px) {
+      body {
+        margin: 20px auto;
+      }
+      .tab-list {
+        gap: 4px;
+      }
+      .tab-button {
+        flex: 1;
+        padding: 10px 8px;
+      }
+      button {
+        width: 100%;
+      }
+      .dose-actions {
+        display: block;
+      }
+      .dose-actions .note {
+        display: block;
+        margin-top: 8px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -213,56 +278,73 @@
 
   <p><a href="index.html">トップへ戻る</a></p>
 
-  <label>成分名</label>
-  <input id="drugInput" placeholder="例：ニンテダニブ">
-
-  <label>キーワード</label>
-  <input id="keywordInput" placeholder="例：むくみ、だるい、尿が茶色い">
-
-  <label>検索方針</label>
-  <select id="searchFocusInput">
-    <option value="auto">すべてから検索（おすすめ）</option>
-    <option value="safety">副作用・警告を中心に検索</option>
-    <option value="dosage">用法・用量を中心に検索</option>
-  </select>
-  <p class="note">検索対象を絞りたい場合に選択します。迷った場合は『すべてから検索』をご利用ください。</p>
-
-  <button onclick="search()">検索</button>
-
-  <section class="dose-panel" aria-labelledby="doseRuleTitle">
-    <h2 id="doseRuleTitle">年齢別・小児用量表示</h2>
-    <p class="note">
-      成分名と年齢から、承認済み添付文書ルールに該当する剤形・規格・適応症別の用量を表示します。
-      参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。
-    </p>
-    <div class="dose-age-grid">
-      <div>
-        <label>年</label>
-        <input id="doseYearsInput" type="number" min="0" step="1" inputmode="numeric" pattern="[0-9]*" placeholder="例：3">
-      </div>
-      <div>
-        <label>か月</label>
-        <input id="doseMonthsInput" type="number" min="0" max="11" step="1" inputmode="numeric" pattern="[0-9]*" value="0">
-      </div>
-    </div>
-    <div class="dose-actions">
-      <button type="button" onclick="evaluateDoseRule()">年齢別用量を確認</button>
-      <span class="note">剤形・規格・適応症は入力せず、該当候補を一覧表示します。</span>
-    </div>
-    <div id="doseStatus" class="note">成分名と年齢を入力してください。</div>
-    <div id="doseResults" class="dose-result"></div>
-  </section>
-
-  <div class="notice">
-    添付文書上、この薬ではこのような副作用が報告されています。<br>
-    この症状と関連する可能性がある項目です。<br>
-    心配な場合は医師・薬剤師へご相談ください。<br>
-    ※診断を行うものではありません。
+  <div class="tab-list" role="tablist" aria-label="検索機能">
+    <button id="pmdaTabButton" class="tab-button active" type="button" role="tab" aria-selected="true" aria-controls="pmdaSearchPanel" onclick="switchTab('pmda')">添付文書検索</button>
+    <button id="doseTabButton" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="doseSearchPanel" onclick="switchTab('dose')">小児用量</button>
   </div>
 
-  <p id="status">薬剤名と症状キーワードを入力してください。</p>
+  <section id="pmdaSearchPanel" class="tab-panel active" role="tabpanel" aria-labelledby="pmdaTabButton">
+    <label>薬品名</label>
+    <input id="pmdaDrugInput" placeholder="例：ニンテダニブ">
 
-  <div id="results"></div>
+    <label>副作用名・調べたい内容</label>
+    <input id="keywordInput" placeholder="例：むくみ、だるい、尿が茶色い">
+
+    <label>検索方針</label>
+    <select id="searchFocusInput">
+      <option value="auto">すべてから検索（おすすめ）</option>
+      <option value="safety">副作用・警告を中心に検索</option>
+      <option value="dosage">用法・用量を中心に検索</option>
+    </select>
+    <p class="note">検索対象を絞りたい場合に選択します。迷った場合は『すべてから検索』をご利用ください。</p>
+
+    <button type="button" onclick="search()">添付文書を検索</button>
+
+    <div class="notice">
+      添付文書上、この薬ではこのような副作用が報告されています。<br>
+      この症状と関連する可能性がある項目です。<br>
+      心配な場合は医師・薬剤師へご相談ください。<br>
+      ※診断を行うものではありません。
+    </div>
+
+    <p id="status">薬剤名と症状キーワードを入力してください。</p>
+
+    <div id="results"></div>
+  </section>
+
+  <section id="doseSearchPanel" class="tab-panel" role="tabpanel" aria-labelledby="doseTabButton">
+    <div class="dose-panel" aria-labelledby="doseRuleTitle">
+      <h2 id="doseRuleTitle">年齢別・小児用量表示</h2>
+      <p class="note">
+        薬品名と年齢から、承認済み添付文書ルールに該当する用量を表示します。
+      </p>
+
+      <label>薬品名</label>
+      <input id="doseDrugInput" placeholder="例：ロラタジン">
+
+      <div class="dose-age-grid">
+        <div>
+          <label>年</label>
+          <input id="doseYearsInput" type="number" min="0" step="1" inputmode="numeric" pattern="[0-9]*" placeholder="例：3">
+        </div>
+        <div>
+          <label>か月</label>
+          <input id="doseMonthsInput" type="number" min="0" max="11" step="1" inputmode="numeric" pattern="[0-9]*" value="0">
+        </div>
+      </div>
+
+      <label>体重（kg）</label>
+      <input id="doseWeightInput" type="number" min="0" step="0.1" inputmode="decimal" placeholder="例：12.5">
+      <p class="note">体重による用量計算は今後対応予定です。</p>
+
+      <div class="dose-actions">
+        <button type="button" onclick="evaluateDoseRule()">小児用量を確認</button>
+        <span class="note">剤形・規格・適応症は入力せず、該当候補を一覧表示します。</span>
+      </div>
+      <div id="doseStatus" class="note">薬品名と年齢を入力してください。</div>
+      <div id="doseResults" class="dose-result"></div>
+    </div>
+  </section>
 
   <section class="contact">
     <h2>ご意見・お問い合わせ</h2>
@@ -311,6 +393,7 @@
     let lastSearchContext = {};
     let contactCsrfToken = "";
     let symptomDictionary = null;
+    let isPmdaSearchRunning = false;
     const EMBEDDING_SCORE_WEIGHT = 0.7;
     const BM25_SCORE_WEIGHT = 0.3;
     const MIN_EMBEDDING_SCORE = 0.55;
@@ -335,14 +418,33 @@
       invalid_input: "入力内容を確認してください"
     };
 
+    function switchTab(tabName) {
+      const isDose = tabName === "dose";
+      document.getElementById("pmdaSearchPanel").classList.toggle("active", !isDose);
+      document.getElementById("doseSearchPanel").classList.toggle("active", isDose);
+      document.getElementById("pmdaTabButton").classList.toggle("active", !isDose);
+      document.getElementById("doseTabButton").classList.toggle("active", isDose);
+      document.getElementById("pmdaTabButton").setAttribute("aria-selected", String(!isDose));
+      document.getElementById("doseTabButton").setAttribute("aria-selected", String(isDose));
+    }
+
+    function scrollToElement(element) {
+      if (!element) {
+        return;
+      }
+      element.scrollIntoView({behavior: "smooth", block: "start"});
+    }
+
     function normalizeTulobuterolQuery(value) {
       return String(value || "").normalize("NFKC").replace(/\s+/g, "");
     }
 
-    function selectTulobuterolForm(value) {
-      document.getElementById("drugInput").value = value;
-      document.getElementById("status").textContent = "剤形を選択しました。必要に応じてキーワードを確認し、検索してください。";
-      document.getElementById("results").innerHTML = "";
+    async function selectTulobuterolForm(value) {
+      if (isPmdaSearchRunning) {
+        return;
+      }
+      document.getElementById("pmdaDrugInput").value = value;
+      await search();
     }
 
     function escapeJsString(value) {
@@ -386,13 +488,14 @@
     }
 
     async function search() {
-      const drugQuery = document.getElementById("drugInput").value.trim();
+      if (isPmdaSearchRunning) {
+        return;
+      }
+      const drugQuery = document.getElementById("pmdaDrugInput").value.trim();
       const keywordQuery = document.getElementById("keywordInput").value.trim();
       const searchFocus = document.getElementById("searchFocusInput").value || "auto";
       const resultsDiv = document.getElementById("results");
       const status = document.getElementById("status");
-      const doseResults = document.getElementById("doseResults");
-      const doseStatus = document.getElementById("doseStatus");
 
       resultsDiv.innerHTML = "";
 
@@ -405,15 +508,13 @@
         return;
       }
       if (normalizeTulobuterolQuery(drugQuery) === "ツロブテロール") {
-        doseResults.innerHTML = "";
-        doseStatus.textContent = "";
         renderTulobuterolFormChoice(resultsDiv, status);
+        scrollToElement(resultsDiv);
         return;
       }
 
-      doseResults.innerHTML = "";
-      doseStatus.textContent = "";
       status.textContent = "検索中...";
+      isPmdaSearchRunning = true;
 
       let data;
       try {
@@ -430,6 +531,7 @@
         data = await res.json();
         if (res.ok && data.status === "needs_formulation") {
           renderTulobuterolFormChoice(resultsDiv, status, data.formulation_options, data.message);
+          scrollToElement(resultsDiv);
           return;
         }
         if (!res.ok || data.status !== "ok") {
@@ -438,6 +540,8 @@
       } catch (error) {
         status.textContent = error.message;
         return;
+      } finally {
+        isPmdaSearchRunning = false;
       }
 
       const dictionary = await loadSymptomDictionary();
@@ -472,7 +576,13 @@
       };
 
       if (rankedResults.length === 0) {
-        resultsDiv.innerHTML = "<p>該当する薬剤または結果がありません。</p>";
+        resultsDiv.innerHTML = `
+          <div class="result">
+            <div class="section">添付文書内に該当する記載は見つかりませんでした。</div>
+            <div class="note">薬品名や検索語を変えて、もう一度お試しください。</div>
+          </div>
+        `;
+        scrollToElement(resultsDiv);
         return;
       }
 
@@ -480,7 +590,7 @@
         const div = document.createElement("div");
         div.className = "result";
 
-        const relevance = toPercent(item.final_score);
+        const relevancePercent = getDisplayRelevancePercent(item, keywordQuery);
         const title = item.section || item.heading || "該当項目";
         const metaParts = [
           item.drug,
@@ -498,28 +608,22 @@
           ${metaParts.length ? `<div class="note">${metaParts.join(" / ")}</div>` : ""}
           <div class="text">${escapeHtml(item.text || "")}</div>
           ${tableHtml}
-          <div class="relevance">一致度 ${relevance}%</div>
-          <div class="relevance-bar-wrap">
-            <span class="relevance-end-label" aria-hidden="true">100%</span>
-            <div class="relevance-bar" aria-label="一致度 ${relevance}%、右端が100%">
-              <div class="relevance-fill" style="width: ${relevance}%"></div>
-            </div>
-          </div>
+          <div class="relevance">一致度 ${relevancePercent}%</div>
+          <div class="relevance-bar-wrap"><div class="relevance-bar" style="width:${relevancePercent}%"></div></div>
           ${debugScores}
         `;
 
         resultsDiv.appendChild(div);
       }
+      scrollToElement(resultsDiv);
     }
 
     async function evaluateDoseRule() {
-      const ingredientName = document.getElementById("drugInput").value.trim();
+      const ingredientName = document.getElementById("doseDrugInput").value.trim();
       const yearsValue = document.getElementById("doseYearsInput").value.trim();
       const monthsValue = document.getElementById("doseMonthsInput").value.trim();
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
-      const searchStatus = document.getElementById("status");
-      const searchResults = document.getElementById("results");
 
       results.innerHTML = "";
 
@@ -533,8 +637,6 @@
         return;
       }
 
-      searchResults.innerHTML = "";
-      searchStatus.textContent = "";
       status.textContent = "年齢別用量を確認中...";
 
       let data;
@@ -559,6 +661,7 @@
       }
 
       renderDoseRuleResult(data);
+      scrollToElement(results);
     }
 
     function renderDoseRuleResult(data) {
@@ -570,28 +673,23 @@
       const warnings = Array.isArray(data.warnings) ? data.warnings : [];
       const ambiguity = normalizeList(data.ambiguity);
       const missingInputs = normalizeList(data.missing_inputs);
+      const hasMatches = matchedRules.length > 0;
 
-      status.textContent = statusLabel;
+      status.textContent = hasMatches ? "" : statusLabel;
 
       const parts = [];
-      parts.push(`<h3>${escapeHtml(statusLabel)}</h3>`);
+
+      if (hasMatches) {
+        parts.push(`<div class="dose-summary">${escapeHtml(data.match_summary || statusLabel)}</div>`);
+      } else {
+        parts.push(`<h3>${escapeHtml(statusLabel)}</h3>`);
+        if (data.match_summary) {
+          parts.push(`<div class="dose-summary">${escapeHtml(data.match_summary)}</div>`);
+        }
+      }
 
       if (data.input_age_months !== undefined && data.input_age_months !== null) {
         parts.push(`<div class="note">入力年齢: ${escapeHtml(formatAgeMonths(data.input_age_months))}</div>`);
-      }
-
-      if (data.match_summary) {
-        parts.push(`<p><strong>${escapeHtml(data.match_summary)}</strong></p>`);
-      }
-
-      if (missingInputs.length) {
-        parts.push(renderDoseMessageList("不足している入力", missingInputs));
-      }
-      if (ambiguity.length) {
-        parts.push(renderDoseMessageList("確認が必要な点", ambiguity));
-      }
-      if (warnings.length) {
-        parts.push(renderDoseMessageList("注意", warnings, "dose-warning"));
       }
 
       if (matchedRules.length) {
@@ -609,6 +707,19 @@
           parts.push(renderDoseRuleCard(rule, index + 1, true));
         });
       }
+
+      const followup = [];
+      if (missingInputs.length) {
+        followup.push(renderDoseMessageList("不足している入力", missingInputs));
+      }
+      if (ambiguity.length) {
+        followup.push(renderDoseMessageList("確認が必要な点", ambiguity));
+      }
+      if (warnings.length) {
+        followup.push(renderDoseMessageList("注意", warnings, "dose-warning"));
+      }
+      followup.push(`<div class="notice">参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>`);
+      parts.push(`<div class="dose-followup">${followup.join("")}</div>`);
 
       if (!matchedRules.length && !nearestRules.length && !ambiguity.length && !missingInputs.length) {
         parts.push("<p>表示できる候補はありません。</p>");
@@ -628,14 +739,10 @@
             renderDoseField("製品規格", rule.product_strength || rule.strength),
             renderDoseField("1回使用量", rule.units_per_dose || rule.formulation_conversion || rule.formulation_conversion_text)
           ].join("");
-      const informationalNote = informationalOnly
-        ? `<div class="dose-warning">参考情報です。この入力年齢に対する該当用量として表示していません。</div>`
-        : "";
 
       return `
         <div class="dose-card">
           <h3>${escapeHtml(title)}</h3>
-          ${informationalNote}
           ${renderDoseField("適応症", rule.indication || rule.indication_scope)}
           ${renderDoseField("対象年齢区分", rule.age_condition_text || rule.age_condition)}
           ${renderDoseField("添付文書上の用量", rule.dose_expression_text || rule.prescribed_dose || rule.dose_per_administration)}
@@ -895,6 +1002,30 @@
       return (text || "").toString().toLowerCase().normalize("NFKC");
     }
 
+    function getDisplayRelevancePercent(item, keywordQuery) {
+      const normalizedQuery = normalizeSearchText(keywordQuery).trim();
+      const normalizedText = normalizeSearchText(item.text || "");
+      if (!normalizedQuery || !normalizedText) {
+        return toPercent(item.final_score ?? item.score);
+      }
+      if (normalizedText.includes(normalizedQuery)) {
+        return 100;
+      }
+
+      const terms = normalizedQuery
+        .split(/\s+/)
+        .map(term => term.trim())
+        .filter(Boolean);
+      if (!terms.length) {
+        return toPercent(item.final_score ?? item.score);
+      }
+      const matchedTerms = terms.filter(term => normalizedText.includes(term)).length;
+      if (matchedTerms === 0) {
+        return toPercent(item.final_score ?? item.score);
+      }
+      return Math.max(0, Math.min(100, Math.round((matchedTerms / terms.length) * 100)));
+    }
+
     function countTermOccurrences(text, term) {
       if (!term) {
         return 0;
@@ -1021,6 +1152,26 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
     }
+
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      const target = event.target;
+      if (!target || !["INPUT", "SELECT"].includes(target.tagName)) {
+        return;
+      }
+      const activePanel = document.querySelector(".tab-panel.active");
+      if (!activePanel || !activePanel.contains(target)) {
+        return;
+      }
+      event.preventDefault();
+      if (activePanel.id === "doseSearchPanel") {
+        evaluateDoseRule();
+      } else {
+        search();
+      }
+    });
 
     loadContactCsrfToken();
   </script>
