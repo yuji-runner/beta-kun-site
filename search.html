@@ -415,6 +415,7 @@
       insufficient_input: "入力情報が不足しています",
       no_approved_rule: "承認済みルールがありません",
       out_of_scope: "添付文書上の該当用量なし",
+      pediatric_age_limit: "小児用量検索の対象年齢外です",
       invalid_input: "入力内容を確認してください"
     };
 
@@ -737,7 +738,7 @@
             renderDoseField("販売名", rule.product_name || rule.product_names),
             renderDoseField("剤形", rule.dosage_form),
             renderDoseField("製品規格", rule.product_strength || rule.strength),
-            renderDoseField("1回使用量", rule.units_per_dose || rule.formulation_conversion || rule.formulation_conversion_text)
+            renderDoseField("製剤使用量", rule.units_per_dose || rule.formulation_conversion || rule.formulation_conversion_text)
           ].join("");
 
       return `
@@ -745,7 +746,10 @@
           <h3>${escapeHtml(title)}</h3>
           ${renderDoseField("適応症", rule.indication || rule.indication_scope)}
           ${renderDoseField("対象年齢区分", rule.age_condition_text || rule.age_condition)}
+          ${renderDoseField("年齢条件の注記", rule.age_lower_bound_note)}
+          ${renderDoseField("用量区分", rule.dose_classification)}
           ${renderDoseField("添付文書上の用量", rule.dose_expression_text || rule.prescribed_dose || rule.dose_per_administration)}
+          ${renderDoseField("用量調整", rule.adjustment_text)}
           ${renderDoseField("1日回数", rule.administrations_per_day)}
           ${renderDoseField("投与時点", rule.timing)}
           ${renderDoseField("投与経路", rule.route)}
@@ -772,7 +776,7 @@
       return `
         <div class="dose-field"><strong>対応製品</strong></div>
         <table>
-          <thead><tr><th>製品名</th><th>剤形</th><th>製品規格</th><th>1回使用量</th></tr></thead>
+          <thead><tr><th>製品名</th><th>剤形</th><th>製品規格</th><th>製剤使用量</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       `;
