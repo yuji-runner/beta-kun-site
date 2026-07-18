@@ -111,6 +111,35 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
     }
+    .dose-conditional-fields[hidden] {
+      display: none;
+    }
+    .dose-context-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .dose-metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 10px 0;
+    }
+    .dose-metric {
+      border-left: 4px solid #1f5f99;
+      background: #f4f7fb;
+      padding: 9px 10px;
+    }
+    .dose-metric-label {
+      color: #555;
+      font-size: 0.85em;
+      font-weight: bold;
+    }
+    .dose-metric-value {
+      color: #18324a;
+      font-size: 1.05em;
+      font-weight: bold;
+    }
     .dose-actions {
       display: flex;
       align-items: center;
@@ -188,6 +217,11 @@
     }
     .formulation-choice-buttons button {
       padding: 8px 12px;
+    }
+    @media (max-width: 640px) {
+      .dose-context-grid, .dose-metric-grid {
+        grid-template-columns: 1fr;
+      }
     }
     .relevance {
       color: #333;
@@ -314,9 +348,9 @@
 
   <section id="doseSearchPanel" class="tab-panel" role="tabpanel" aria-labelledby="doseTabButton">
     <div class="dose-panel" aria-labelledby="doseRuleTitle">
-      <h2 id="doseRuleTitle">年齢別・小児用量表示</h2>
+      <h2 id="doseRuleTitle">小児用量表示</h2>
       <p class="note">
-        薬品名と年齢から、承認済み添付文書ルールに該当する用量を表示します。
+        薬品名と必要な患者情報から、承認済み添付文書ルールに該当する用量を表示します。
       </p>
 
       <label>薬品名</label>
@@ -333,13 +367,26 @@
         </div>
       </div>
 
-      <label>体重（kg）</label>
-      <input id="doseWeightInput" type="number" min="0" step="0.1" inputmode="decimal" placeholder="例：12.5">
-      <p class="note">体重による用量計算は今後対応予定です。</p>
+      <div id="doseWeightFields" class="dose-conditional-fields" hidden>
+        <label for="doseWeightInput">体重</label>
+        <input id="doseWeightInput" type="text" inputmode="decimal" autocomplete="off" placeholder="例：12.5" aria-describedby="doseWeightNote">
+        <p id="doseWeightNote" class="note">kg単位で入力してください。</p>
+      </div>
+
+      <div id="doseContextFields" class="dose-context-grid dose-conditional-fields" hidden>
+        <div id="doseIndicationField" hidden>
+          <label for="doseIndicationInput">適応症</label>
+          <select id="doseIndicationInput"><option value="">選択してください</option></select>
+        </div>
+        <div id="doseRouteField" hidden>
+          <label for="doseRouteInput">投与経路</label>
+          <select id="doseRouteInput"><option value="">選択してください</option></select>
+        </div>
+      </div>
 
       <div class="dose-actions">
         <button type="button" onclick="evaluateDoseRule()">小児用量を確認</button>
-        <span class="note">剤形・規格・適応症は入力せず、該当候補を一覧表示します。</span>
+        <span class="note">薬品に応じて必要な入力項目を表示します。</span>
       </div>
       <div id="doseStatus" class="note">薬品名と年齢を入力してください。</div>
       <div id="doseResults" class="dose-result"></div>
@@ -410,14 +457,26 @@
     const DEBUG_SEARCH_SCORES = new URLSearchParams(window.location.search).has("debug");
     const DOSE_STATUS_LABELS = {
       matched: "添付文書上の該当用量",
+      multiple_dose_rules: "複数の用量候補があります",
+      search_matched_multiple: "薬品名の候補を選択してください",
       matched_multiple: "添付文書上の該当候補",
       multiple_matches: "条件を特定できない候補があります",
       insufficient_input: "入力情報が不足しています",
       no_approved_rule: "承認済みルールがありません",
       out_of_scope: "添付文書上の該当用量なし",
       pediatric_age_limit: "小児用量検索の対象年齢外です",
+      no_match: "対応する承認済み用量ルールが見つかりません",
+      input_required: "必要な入力項目を確認してください",
+      weight_required: "体重を入力してください",
+      indication_required: "適応症を選択してください",
+      route_required: "投与経路を選択してください",
+      stage6_weight_scope_exceeded: "この体重は現在の小児体重換算検索の対象範囲外です",
+      invalid_decimal_input: "体重の入力形式を確認してください",
+      dose_engine_required: "複数の用量体系があります。条件を選択してください",
       invalid_input: "入力内容を確認してください"
     };
+    let resolvedDoseIngredient = "";
+    let doseCapabilities = null;
 
     function switchTab(tabName) {
       const isDose = tabName === "dose";
@@ -499,6 +558,8 @@
       const status = document.getElementById("status");
 
       resultsDiv.innerHTML = "";
+      document.getElementById("doseResults").innerHTML = "";
+      document.getElementById("doseStatus").textContent = "";
 
       if (!drugQuery) {
         status.textContent = "薬剤名を入力してください。";
@@ -620,16 +681,18 @@
     }
 
     async function evaluateDoseRule() {
-      const ingredientName = document.getElementById("doseDrugInput").value.trim();
+      const drugQuery = document.getElementById("doseDrugInput").value.trim();
       const yearsValue = document.getElementById("doseYearsInput").value.trim();
       const monthsValue = document.getElementById("doseMonthsInput").value.trim();
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
 
       results.innerHTML = "";
+      document.getElementById("results").innerHTML = "";
+      document.getElementById("status").textContent = "";
 
-      if (!ingredientName) {
-        status.textContent = "成分名を入力してください。";
+      if (!drugQuery) {
+        status.textContent = "薬品名を入力してください。";
         return;
       }
       if (yearsValue === "") {
@@ -642,7 +705,7 @@
 
       let searchData;
       try {
-        const res = await fetch(apiUrl(`/api/dose-rule/search?q=${encodeURIComponent(ingredientName)}`));
+        const res = await fetch(apiUrl(`/api/pediatric-dose/search?q=${encodeURIComponent(drugQuery)}`));
         searchData = await res.json();
         if (!res.ok) {
           throw new Error(searchData.message || searchData.error || "薬品名の確認に失敗しました。");
@@ -653,11 +716,11 @@
         return;
       }
 
-      if (searchData.status === "resolved" && searchData.ingredient_name) {
-        await evaluateResolvedDose(searchData.ingredient_name, yearsValue, monthsValue);
+      if (searchData.status === "matched" && Array.isArray(searchData.matches) && searchData.matches.length === 1) {
+        await prepareResolvedDose(searchData.matches[0].ingredient_name, yearsValue, monthsValue);
         return;
       }
-      if (searchData.status === "multiple_candidates") {
+      if (searchData.status === "search_matched_multiple" || (Array.isArray(searchData.matches) && searchData.matches.length > 1)) {
         renderDoseSearchCandidates(searchData, yearsValue, monthsValue);
         return;
       }
@@ -667,21 +730,110 @@
       scrollToElement(results);
     }
 
+    async function prepareResolvedDose(ingredientName, yearsValue, monthsValue) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      status.textContent = "必要な入力項目を確認中...";
+      try {
+        const res = await fetch(apiUrl(`/api/pediatric-dose/capabilities?ingredient_name=${encodeURIComponent(ingredientName)}`));
+        const capabilityData = await res.json();
+        if (!res.ok || capabilityData.status !== "matched") {
+          throw new Error(capabilityData.message || "対応する用量情報がありません。");
+        }
+        resolvedDoseIngredient = ingredientName;
+        doseCapabilities = capabilityData;
+        configureDoseInputs(capabilityData);
+        await evaluateResolvedDose(ingredientName, yearsValue, monthsValue);
+      } catch (error) {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">${escapeHtml(error.message || "用量情報を取得できませんでした。")}</div>`;
+      }
+      scrollToElement(results);
+    }
+
+    function configureDoseInputs(capabilityData) {
+      const requiredInputs = Array.isArray(capabilityData.required_inputs) ? capabilityData.required_inputs : [];
+      const supportedContext = capabilityData.supported_context || {};
+      const requiresWeight = requiredInputs.includes("weight");
+      document.getElementById("doseWeightFields").hidden = !requiresWeight;
+      const contexts = (capabilityData.engine_capabilities || []).flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : []);
+      const indications = uniqueDoseOptions(contexts.map(context => context.indication).filter(Boolean).map(item => ({
+        value: item.label || item.id || String(item),
+        label: item.label || item.id || String(item)
+      })));
+      const routes = uniqueDoseOptions(contexts.map(context => context.route).filter(Boolean).map(value => ({
+        value,
+        label: value === "oral" ? "経口" : value === "rectal" ? "直腸" : value
+      })));
+      configureDoseSelect("doseIndicationInput", indications);
+      configureDoseSelect("doseRouteInput", routes);
+      document.getElementById("doseIndicationField").hidden = !supportedContext.indication;
+      document.getElementById("doseRouteField").hidden = !supportedContext.route;
+      document.getElementById("doseContextFields").hidden = !supportedContext.indication && !supportedContext.route;
+    }
+
+    function uniqueDoseOptions(options) {
+      return options.filter((option, index) => options.findIndex(item => item.value === option.value) === index);
+    }
+
+    function configureDoseSelect(id, options) {
+      const select = document.getElementById(id);
+      const previous = select.value;
+      select.innerHTML = `<option value="">選択してください</option>` + options.map(option =>
+        `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`
+      ).join("");
+      if (options.some(option => option.value === previous)) {
+        select.value = previous;
+      }
+    }
+
+    function validateDoseWeight(value) {
+      if (value === "") {
+        return "体重を入力してください。";
+      }
+      if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+        return "体重の入力形式を確認してください。";
+      }
+      if (Number(value) <= 0) {
+        return "体重は0より大きい値を入力してください。";
+      }
+      return "";
+    }
+
     async function evaluateResolvedDose(ingredientName, yearsValue, monthsValue) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
-      status.textContent = "年齢別用量を確認中...";
+      const requiredInputs = Array.isArray(doseCapabilities && doseCapabilities.required_inputs) ? doseCapabilities.required_inputs : [];
+      const weightValue = document.getElementById("doseWeightInput").value.trim();
+      if (requiredInputs.includes("weight")) {
+        const weightError = validateDoseWeight(weightValue);
+        if (weightError) {
+          status.textContent = "";
+          results.innerHTML = `<div class="dose-error">${escapeHtml(weightError)}</div>`;
+          return;
+        }
+      }
+      const payload = {
+        ingredient_name: ingredientName,
+        age_years: Number(yearsValue),
+        age_months: Number(monthsValue || "0")
+      };
+      if (requiredInputs.includes("weight")) {
+        payload.weight_kg = weightValue;
+      }
+      const indication = document.getElementById("doseIndicationInput").value;
+      const route = document.getElementById("doseRouteInput").value;
+      if (indication) payload.indication = indication;
+      if (route) payload.route = route;
+      status.textContent = "小児用量を確認中...";
       try {
-        const res = await fetch(apiUrl("/api/dose-rule/evaluate"), {
+        const res = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
           method: "POST",
           headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({ingredient_name: ingredientName, years: yearsValue, months: monthsValue})
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.message || data.error || "用量APIの確認に失敗しました。");
-        }
-        renderDoseRuleResult(data);
+        renderUnifiedDoseResult(data);
       } catch (error) {
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">用量情報を取得できませんでした。しばらくしてから、もう一度お試しください。</div>`;
@@ -692,8 +844,8 @@
     function renderDoseSearchCandidates(searchData, yearsValue, monthsValue) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
-      const candidates = Array.isArray(searchData.candidates) ? searchData.candidates : [];
-      status.textContent = "候補を選択してください";
+      const candidates = Array.isArray(searchData.matches) ? searchData.matches : [];
+      status.textContent = "薬品名の候補を選択してください";
       const items = candidates.map((candidate, index) => {
         const products = Array.isArray(candidate.matched_products) ? candidate.matched_products : [];
         const productRows = products.map(product => `
@@ -707,17 +859,87 @@
           </div>
         `;
       }).join("");
-      results.innerHTML = `<div class="dose-summary">候補を選択してください</div>${items}`;
+      results.innerHTML = `<div class="dose-summary">薬品名の候補を選択してください</div>${items}`;
       results.querySelectorAll(".dose-candidate-select").forEach(button => {
         button.addEventListener("click", async () => {
           const candidate = candidates[Number(button.dataset.candidateIndex)];
           if (candidate && candidate.ingredient_name) {
             results.innerHTML = "";
-            await evaluateResolvedDose(candidate.ingredient_name, yearsValue, monthsValue);
+            await prepareResolvedDose(candidate.ingredient_name, yearsValue, monthsValue);
           }
         });
       });
       scrollToElement(results);
+    }
+
+    function renderUnifiedDoseResult(envelope) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
+        if (envelope.engine && envelope.engine.engine_name === "pediatric_weight_dose") {
+          renderStage6DoseResult(envelope);
+        } else {
+          renderDoseRuleResult(envelope.result || {});
+        }
+        return;
+      }
+      const label = DOSE_STATUS_LABELS[envelope.status] || envelope.message || "用量情報を確認できませんでした";
+      status.textContent = label;
+      results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
+    }
+
+    function renderStage6DoseResult(envelope) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      const data = envelope.result || {};
+      const indication = data.indication && (data.indication.label || data.indication.id) || "";
+      const routeLabel = data.route === "oral" ? "経口" : data.route === "rectal" ? "直腸" : data.route || "";
+      const interval = data.administration_interval && data.administration_interval.original_text || "";
+      const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+      const products = Array.isArray(data.product_conversion) ? data.product_conversion : [];
+      const productCards = products.map(product => {
+        const display = product.display_product_dose || {};
+        const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
+        const productWarnings = normalizeList(product.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+        return `<div class="dose-card">
+          <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
+          ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
+          ${renderDoseField("理論製剤量", `${display.min || ""}～${display.max || ""} ${unit}/回`)}
+          ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
+        </div>`;
+      }).join("");
+      status.textContent = "";
+      results.innerHTML = `
+        <div class="dose-card">
+          <h3>${escapeHtml(data.ingredient_name || "")}</h3>
+          ${renderDoseField("適応症", indication)}
+          ${renderDoseField("投与経路", routeLabel)}
+          <div class="dose-metric-grid">
+            ${renderDoseMetric("1回量", `${data.single_dose_min_mg || ""}～${data.single_dose_max_mg || ""} mg/回`)}
+            ${renderDoseMetric("1日上限", `${data.effective_daily_limit_mg || ""} mg/日`)}
+            ${renderDoseMetric("投与間隔", interval)}
+          </div>
+          ${renderDoseSource("添付文書原文", data.original_dosage_text)}
+        </div>
+        ${productCards}
+        ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
+        <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
+      `;
+    }
+
+    function renderDoseMetric(label, value) {
+      return `<div class="dose-metric"><div class="dose-metric-label">${escapeHtml(label)}</div><div class="dose-metric-value">${escapeHtml(value)}</div></div>`;
+    }
+
+    function formatStage6DosageForm(value) {
+      const labels = {
+        powder: "原末",
+        fine_granules: "細粒",
+        dry_syrup: "ドライシロップ",
+        syrup: "シロップ",
+        suppository: "坐剤"
+      };
+      return labels[value] || value || "";
     }
 
     function renderDoseRuleResult(data) {
@@ -1232,6 +1454,15 @@
       } else {
         search();
       }
+    });
+
+    document.getElementById("doseDrugInput").addEventListener("input", () => {
+      resolvedDoseIngredient = "";
+      doseCapabilities = null;
+      document.getElementById("doseWeightFields").hidden = true;
+      document.getElementById("doseContextFields").hidden = true;
+      document.getElementById("doseIndicationField").hidden = true;
+      document.getElementById("doseRouteField").hidden = true;
     });
 
     loadContactCsrfToken();
