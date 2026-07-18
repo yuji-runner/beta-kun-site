@@ -119,6 +119,18 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
     }
+    .dose-weight-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+    }
+    .dose-weight-row input {
+      margin-bottom: 6px;
+    }
+    .dose-weight-unit {
+      white-space: nowrap;
+    }
     .dose-metric-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -367,9 +379,12 @@
         </div>
       </div>
 
-      <div id="doseWeightFields" class="dose-conditional-fields" hidden>
+      <div id="doseWeightFields">
         <label for="doseWeightInput">体重</label>
-        <input id="doseWeightInput" type="text" inputmode="decimal" autocomplete="off" placeholder="例：12.5" aria-describedby="doseWeightNote">
+        <div class="dose-weight-row">
+          <input id="doseWeightInput" type="text" inputmode="decimal" autocomplete="off" placeholder="例：12.5" aria-describedby="doseWeightNote">
+          <span class="dose-weight-unit">kg</span>
+        </div>
         <p id="doseWeightNote" class="note">kg単位で入力してください。</p>
       </div>
 
@@ -754,8 +769,6 @@
     function configureDoseInputs(capabilityData) {
       const requiredInputs = Array.isArray(capabilityData.required_inputs) ? capabilityData.required_inputs : [];
       const supportedContext = capabilityData.supported_context || {};
-      const requiresWeight = requiredInputs.includes("weight");
-      document.getElementById("doseWeightFields").hidden = !requiresWeight;
       const contexts = (capabilityData.engine_capabilities || []).flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : []);
       const indications = uniqueDoseOptions(contexts.map(context => context.indication).filter(Boolean).map(item => ({
         value: item.label || item.id || String(item),
@@ -1459,7 +1472,6 @@
     document.getElementById("doseDrugInput").addEventListener("input", () => {
       resolvedDoseIngredient = "";
       doseCapabilities = null;
-      document.getElementById("doseWeightFields").hidden = true;
       document.getElementById("doseContextFields").hidden = true;
       document.getElementById("doseIndicationField").hidden = true;
       document.getElementById("doseRouteField").hidden = true;
