@@ -364,6 +364,7 @@
       <p class="note">
         薬品名と必要な患者情報から、承認済み添付文書ルールに該当する用量を表示します。
       </p>
+      <p class="notice">本機能は15歳未満の小児を対象としています。</p>
 
       <label>薬品名</label>
       <input id="doseDrugInput" placeholder="例：ロラタジン">
@@ -403,7 +404,7 @@
         <button type="button" onclick="evaluateDoseRule()">小児用量を確認</button>
         <span class="note">薬品に応じて必要な入力項目を表示します。</span>
       </div>
-      <div id="doseStatus" class="note">薬品名と年齢を入力してください。</div>
+      <div id="doseStatus" class="note">薬品名と必要な患者情報を入力してください。</div>
       <div id="doseResults" class="dose-result"></div>
     </div>
   </section>
@@ -710,12 +711,6 @@
         status.textContent = "薬品名を入力してください。";
         return;
       }
-      if (yearsValue === "") {
-        status.textContent = "";
-        results.innerHTML = `<div class="dose-error">年齢の『年』を入力してください。0歳の場合は0を入力してください。</div>`;
-        return;
-      }
-
       status.textContent = "薬品名を確認中...";
 
       let searchData;
@@ -768,7 +763,6 @@
 
     function configureDoseInputs(capabilityData) {
       const requiredInputs = Array.isArray(capabilityData.required_inputs) ? capabilityData.required_inputs : [];
-      const supportedContext = capabilityData.supported_context || {};
       const contexts = (capabilityData.engine_capabilities || []).flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : []);
       const indications = uniqueDoseOptions(contexts.map(context => context.indication).filter(Boolean).map(item => ({
         value: item.label || item.id || String(item),
@@ -780,9 +774,11 @@
       })));
       configureDoseSelect("doseIndicationInput", indications);
       configureDoseSelect("doseRouteInput", routes);
-      document.getElementById("doseIndicationField").hidden = !supportedContext.indication;
-      document.getElementById("doseRouteField").hidden = !supportedContext.route;
-      document.getElementById("doseContextFields").hidden = !supportedContext.indication && !supportedContext.route;
+      const showIndication = indications.length > 1;
+      const showRoute = routes.length > 1;
+      document.getElementById("doseIndicationField").hidden = !showIndication;
+      document.getElementById("doseRouteField").hidden = !showRoute;
+      document.getElementById("doseContextFields").hidden = !showIndication && !showRoute;
     }
 
     function uniqueDoseOptions(options) {
@@ -797,6 +793,8 @@
       ).join("");
       if (options.some(option => option.value === previous)) {
         select.value = previous;
+      } else if (options.length === 1) {
+        select.value = options[0].value;
       }
     }
 
@@ -818,6 +816,11 @@
       const results = document.getElementById("doseResults");
       const requiredInputs = Array.isArray(doseCapabilities && doseCapabilities.required_inputs) ? doseCapabilities.required_inputs : [];
       const weightValue = document.getElementById("doseWeightInput").value.trim();
+      if (requiredInputs.includes("age") && yearsValue === "") {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">年齢の『年』を入力してください。0歳の場合は0を入力してください。</div>`;
+        return;
+      }
       if (requiredInputs.includes("weight")) {
         const weightError = validateDoseWeight(weightValue);
         if (weightError) {
@@ -826,18 +829,18 @@
           return;
         }
       }
-      const payload = {
-        ingredient_name: ingredientName,
-        age_years: Number(yearsValue),
-        age_months: Number(monthsValue || "0")
-      };
+      const payload = {ingredient_name: ingredientName};
+      if (yearsValue !== "") {
+        payload.age_years = Number(yearsValue);
+        payload.age_months = Number(monthsValue || "0");
+      }
       if (requiredInputs.includes("weight")) {
         payload.weight_kg = weightValue;
       }
       const indication = document.getElementById("doseIndicationInput").value;
       const route = document.getElementById("doseRouteInput").value;
-      if (indication) payload.indication = indication;
-      if (route) payload.route = route;
+      if (!document.getElementById("doseIndicationField").hidden && indication) payload.indication = indication;
+      if (!document.getElementById("doseRouteField").hidden && route) payload.route = route;
       status.textContent = "小児用量を確認中...";
       try {
         const res = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
