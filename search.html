@@ -681,7 +681,9 @@
       const parts = [];
 
       if (hasMatches) {
-        parts.push(`<div class="dose-summary">${escapeHtml(data.match_summary || statusLabel)}</div>`);
+        if (matchedRules.length > 1) {
+          parts.push(`<div class="dose-summary">${matchedRules.length}件の候補が見つかりました</div>`);
+        }
       } else {
         parts.push(`<h3>${escapeHtml(statusLabel)}</h3>`);
         if (data.match_summary) {
@@ -689,7 +691,7 @@
         }
       }
 
-      if (data.input_age_months !== undefined && data.input_age_months !== null) {
+      if (!hasMatches && data.input_age_months !== undefined && data.input_age_months !== null) {
         parts.push(`<div class="note">入力年齢: ${escapeHtml(formatAgeMonths(data.input_age_months))}</div>`);
       }
 
