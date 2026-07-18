@@ -638,22 +638,14 @@
         return;
       }
 
-      status.textContent = "年齢別用量を確認中...";
+      status.textContent = "薬品名を確認中...";
 
-      let data;
+      let searchData;
       try {
-        const res = await fetch(apiUrl("/api/dose-rule/evaluate"), {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            ingredient_name: ingredientName,
-            years: yearsValue,
-            months: monthsValue
-          })
-        });
-        data = await res.json();
+        const res = await fetch(apiUrl(`/api/dose-rule/search?q=${encodeURIComponent(ingredientName)}`));
+        searchData = await res.json();
         if (!res.ok) {
-          throw new Error(data.message || data.error || "用量APIの確認に失敗しました。");
+          throw new Error(searchData.message || searchData.error || "薬品名の確認に失敗しました。");
         }
       } catch (error) {
         status.textContent = "";
@@ -661,7 +653,70 @@
         return;
       }
 
-      renderDoseRuleResult(data);
+      if (searchData.status === "resolved" && searchData.ingredient_name) {
+        await evaluateResolvedDose(searchData.ingredient_name, yearsValue, monthsValue);
+        return;
+      }
+      if (searchData.status === "multiple_candidates") {
+        renderDoseSearchCandidates(searchData, yearsValue, monthsValue);
+        return;
+      }
+
+      status.textContent = "";
+      results.innerHTML = `<div class="dose-error">${escapeHtml(searchData.message || "該当する薬品名を確認できませんでした。")}</div>`;
+      scrollToElement(results);
+    }
+
+    async function evaluateResolvedDose(ingredientName, yearsValue, monthsValue) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      status.textContent = "年齢別用量を確認中...";
+      try {
+        const res = await fetch(apiUrl("/api/dose-rule/evaluate"), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ingredient_name: ingredientName, years: yearsValue, months: monthsValue})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || data.error || "用量APIの確認に失敗しました。");
+        }
+        renderDoseRuleResult(data);
+      } catch (error) {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">用量情報を取得できませんでした。しばらくしてから、もう一度お試しください。</div>`;
+      }
+      scrollToElement(results);
+    }
+
+    function renderDoseSearchCandidates(searchData, yearsValue, monthsValue) {
+      const status = document.getElementById("doseStatus");
+      const results = document.getElementById("doseResults");
+      const candidates = Array.isArray(searchData.candidates) ? searchData.candidates : [];
+      status.textContent = "候補を選択してください";
+      const items = candidates.map((candidate, index) => {
+        const products = Array.isArray(candidate.matched_products) ? candidate.matched_products : [];
+        const productRows = products.map(product => `
+          <div class="note">${escapeHtml([product.product_name, product.dosage_form, product.strength].filter(Boolean).join(" / "))}</div>
+        `).join("");
+        return `
+          <div class="dose-card">
+            <h3>${escapeHtml(candidate.ingredient_name || "")}</h3>
+            ${productRows}
+            <button type="button" class="dose-candidate-select" data-candidate-index="${index}">この成分を選択</button>
+          </div>
+        `;
+      }).join("");
+      results.innerHTML = `<div class="dose-summary">候補を選択してください</div>${items}`;
+      results.querySelectorAll(".dose-candidate-select").forEach(button => {
+        button.addEventListener("click", async () => {
+          const candidate = candidates[Number(button.dataset.candidateIndex)];
+          if (candidate && candidate.ingredient_name) {
+            results.innerHTML = "";
+            await evaluateResolvedDose(candidate.ingredient_name, yearsValue, monthsValue);
+          }
+        });
+      });
       scrollToElement(results);
     }
 
