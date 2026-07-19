@@ -1083,6 +1083,35 @@
         ${renderDoseField("1回製剤量", `${standardDose.product_dose.value} ${String(standardDose.product_dose.unit || "").replace("/dose", "/回")}`)}
         ${renderDoseSource("添付文書記載", standardDose.source_text)}
       </div>` : "";
+      const conditionalDoseCards = normalizeList(data.conditional_dose_options).map(option => {
+        const single = option.applied_single_dose && (option.applied_single_dose.display || option.applied_single_dose.raw) || {};
+        const daily = option.applied_daily_dose && (option.applied_daily_dose.display || option.applied_daily_dose.raw) || {};
+        const optionWarnings = normalizeList(option.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+        const optionProducts = normalizeList(option.product_conversion);
+        const optionDailyProducts = normalizeList(option.applied_daily_product_conversion);
+        const optionProductCards = optionProducts.map(product => {
+          const perDose = product.display_product_dose || {};
+          const dailyProduct = optionDailyProducts.find(item => item.product_id === product.product_id) || {};
+          const perDay = dailyProduct.display_product_dose || {};
+          const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
+          return `<div class="dose-card">
+            <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
+            ${renderDoseField("条件付き増量時1回製剤量", formatDoseRange(perDose.min, perDose.max, `${unit}/回`))}
+            ${renderDoseField("条件付き増量時1日製剤量", formatDoseRange(perDay.min, perDay.max, `${unit}/日`))}
+          </div>`;
+        }).join("");
+        return `<div class="dose-card">
+          <h3>添付文書記載の条件付き増量量</h3>
+          ${renderDoseField("条件", option.condition_text || "")}
+          <div class="dose-metric-grid">
+            ${renderDoseMetric("条件付き増量時1回成分量", formatDoseRange(single.min, single.max, "mg/回"))}
+            ${renderDoseMetric("条件付き増量時1日成分量", formatDoseRange(daily.min, daily.max, "mg/日"))}
+            ${renderDoseMetric("投与回数", `1日${option.times_per_day}回`)}
+          </div>
+          ${option.source_text ? renderDoseSource("添付文書原文", option.source_text) : ""}
+          ${optionWarnings.length ? renderDoseMessageList("条件付き増量時の注意", optionWarnings, "dose-warning") : ""}
+        </div>${optionProductCards}`;
+      }).join("");
       status.textContent = "";
       results.innerHTML = `
         <div class="dose-card">
@@ -1103,6 +1132,7 @@
         </div>
         ${productCards}
         ${standardDoseCard}
+        ${conditionalDoseCards}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
         <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
       `;
