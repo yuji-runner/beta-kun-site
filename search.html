@@ -501,6 +501,7 @@
     let resolvedDoseIngredient = "";
     let doseCapabilities = null;
     let doseRequiredContexts = [];
+    let doseContextOptionMeta = {};
 
     function switchTab(tabName) {
       const isDose = tabName === "dose";
@@ -780,7 +781,10 @@
         value,
         label: value === "oral" ? "経口" : value === "rectal" ? "直腸" : value
       })));
-      const dosageForms = uniqueDoseOptions(contexts.map(context => context.dosage_form || context.formulation || context.product_name).filter(Boolean).map(value => ({
+      // Prefer explicit context_options from the API. These carry stable values
+      // (product/rule identifiers) separately from user-facing labels.
+      const explicitFormOptions = extractContextOptions(capabilityData, "dosage_form");
+      const dosageForms = explicitFormOptions.length ? explicitFormOptions : uniqueDoseOptions(contexts.map(context => context.dosage_form || context.formulation || context.product_name).filter(Boolean).map(value => ({
         value: typeof value === "object" ? (value.id || value.value || value.label || String(value)) : String(value),
         label: typeof value === "object" ? (value.label || value.name || value.value || String(value)) : formatStage6DosageForm(String(value))
       })));
@@ -796,6 +800,28 @@
       document.getElementById("doseRouteField").hidden = !showRoute;
       document.getElementById("doseDosageFormField").hidden = !(dosageForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
       document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
+    }
+
+    function extractContextOptions(source, contextName) {
+      const options = source && source.context_options && source.context_options[contextName];
+      if (!Array.isArray(options)) return [];
+      return uniqueDoseOptions(options.map(option => {
+        if (typeof option === "string") return {value: option, label: option};
+        const value = option.value || option.id || option.product_id || option.rule_id || option.dosage_form || option.formulation;
+        const label = option.label || option.name || option.product_name || option.dosage_form || option.strength || value;
+        if (value) doseContextOptionMeta[String(value)] = option;
+        return value ? {value: String(value), label: String(label)} : null;
+      }).filter(Boolean));
+    }
+
+    function applyContextOptions(source) {
+      const options = extractContextOptions(source, "dosage_form");
+      if (options.length) {
+        configureDoseSelect("doseDosageFormInput", options);
+        document.getElementById("doseDosageFormField").hidden = false;
+        document.getElementById("doseContextFields").hidden = false;
+      }
+      return options.length;
     }
 
     function uniqueDoseOptions(options) {
@@ -872,6 +898,8 @@
       if (!document.getElementById("doseIndicationField").hidden && indication) payload.indication = indication;
       if (!document.getElementById("doseRouteField").hidden && route) payload.route = route;
       if (!document.getElementById("doseDosageFormField").hidden && contextValues.dosage_form) payload.dosage_form = contextValues.dosage_form;
+      const selectedOptionMeta = doseContextOptionMeta[contextValues.dosage_form];
+      if (selectedOptionMeta && selectedOptionMeta.product_id) payload.product_id = selectedOptionMeta.product_id;
       if (doseRequiredContexts.includes("formulation") && contextValues.formulation) payload.formulation = contextValues.formulation;
       if (doseRequiredContexts.includes("product") && contextValues.product) payload.product = contextValues.product;
       status.textContent = "小児用量を確認中...";
@@ -924,6 +952,19 @@
     function renderUnifiedDoseResult(envelope) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
+      if (["dosage_form_required", "formulation_required", "product_required", "route_required", "indication_required"].includes(envelope.status)) {
+        // Required context options may be returned at the envelope level or
+        // nested in details/result depending on API version.
+        const source = envelope.context_options ? envelope : (envelope.details || envelope.result || envelope);
+        applyContextOptions(source);
+        const required = Array.isArray(envelope.required_contexts) ? envelope.required_contexts : [envelope.status.replace("_required", "")];
+        doseRequiredContexts = required;
+        const key = required[0];
+        const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
+        status.textContent = label;
+        results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
+        return;
+      }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
         if (envelope.engine && envelope.engine.engine_name === "pediatric_weight_dose") {
           renderStage6DoseResult(envelope);
