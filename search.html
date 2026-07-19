@@ -517,7 +517,7 @@
       if (!element) {
         return;
       }
-      element.scrollIntoView({behavior: "smooth", block: "start"});
+      element.scrollIntoView({behavior: "smooth", block: "center"});
     }
 
     function normalizeTulobuterolQuery(value) {
@@ -915,7 +915,9 @@
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">用量情報を取得できませんでした。しばらくしてから、もう一度お試しください。</div>`;
       }
-      scrollToElement(results);
+      if (!data || !["dosage_form_required", "formulation_required", "product_required", "route_required", "indication_required"].includes(data.status)) {
+        scrollToElement(results);
+      }
     }
 
     function renderDoseSearchCandidates(searchData, yearsValue, monthsValue) {
@@ -960,10 +962,12 @@
         const required = Array.isArray(envelope.required_contexts) ? envelope.required_contexts : [envelope.status.replace("_required", "")];
         doseRequiredContexts = required;
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
-        status.textContent = label;
-        results.innerHTML = "";
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-required-context"><div class="dose-required-context-message">${escapeHtml(label)}</div></div>`;
         document.querySelectorAll(".dose-inline-contexts").forEach(node => node.remove());
-        renderInlineRequiredContexts(status, required, source);
+        const requiredContainer = results.querySelector(".dose-required-context");
+        renderInlineRequiredContexts(requiredContainer, required, source);
+        scrollToElement(requiredContainer);
         return;
       }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
@@ -1004,7 +1008,7 @@
         field.append(label, select);
         wrapper.appendChild(field);
       });
-      if (wrapper.children.length) anchor.parentNode.insertBefore(wrapper, anchor.nextSibling);
+      if (wrapper.children.length) anchor.appendChild(wrapper);
     }
 
     function renderStage6DoseResult(envelope) {
