@@ -398,6 +398,10 @@
           <label for="doseRouteInput">投与経路</label>
           <select id="doseRouteInput"><option value="">選択してください</option></select>
         </div>
+        <div id="doseDosageFormField" hidden>
+          <label for="doseDosageFormInput">剤形・製剤</label>
+          <select id="doseDosageFormInput"><option value="">選択してください</option></select>
+        </div>
       </div>
 
       <div class="dose-actions">
@@ -486,6 +490,9 @@
       weight_required: "体重を入力してください",
       indication_required: "適応症を選択してください",
       route_required: "投与経路を選択してください",
+      dosage_form_required: "剤形・製剤を選択してください",
+      formulation_required: "剤形・製剤を選択してください",
+      product_required: "製剤を選択してください",
       stage6_weight_scope_exceeded: "この体重は現在の小児体重換算検索の対象範囲外です",
       invalid_decimal_input: "体重の入力形式を確認してください",
       dose_engine_required: "複数の用量体系があります。条件を選択してください",
@@ -493,6 +500,7 @@
     };
     let resolvedDoseIngredient = "";
     let doseCapabilities = null;
+    let doseRequiredContexts = [];
 
     function switchTab(tabName) {
       const isDose = tabName === "dose";
@@ -772,13 +780,22 @@
         value,
         label: value === "oral" ? "経口" : value === "rectal" ? "直腸" : value
       })));
+      const dosageForms = uniqueDoseOptions(contexts.map(context => context.dosage_form || context.formulation || context.product_name).filter(Boolean).map(value => ({
+        value: typeof value === "object" ? (value.id || value.value || value.label || String(value)) : String(value),
+        label: typeof value === "object" ? (value.label || value.name || value.value || String(value)) : formatStage6DosageForm(String(value))
+      })));
       configureDoseSelect("doseIndicationInput", indications);
       configureDoseSelect("doseRouteInput", routes);
+      configureDoseSelect("doseDosageFormInput", dosageForms);
       const showIndication = indications.length > 1;
       const showRoute = routes.length > 1;
+      const explicitRequired = Array.isArray(capabilityData.required_context) ? capabilityData.required_context : (Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : []);
+      doseRequiredContexts = explicitRequired.length ? explicitRequired : [];
+      if (!doseRequiredContexts.length && dosageForms.length > 1) doseRequiredContexts.push("dosage_form");
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
-      document.getElementById("doseContextFields").hidden = !showIndication && !showRoute;
+      document.getElementById("doseDosageFormField").hidden = !(dosageForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
+      document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
     }
 
     function uniqueDoseOptions(options) {
@@ -829,6 +846,19 @@
           return;
         }
       }
+      const contextValues = {
+        indication: document.getElementById("doseIndicationInput").value,
+        route: document.getElementById("doseRouteInput").value,
+        dosage_form: document.getElementById("doseDosageFormInput").value,
+        formulation: document.getElementById("doseDosageFormInput").value,
+        product: document.getElementById("doseDosageFormInput").value
+      };
+      const missingContext = doseRequiredContexts.find(name => !contextValues[name]);
+      if (missingContext) {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">${escapeHtml(DOSE_STATUS_LABELS[`${missingContext}_required`] || "必要な条件を選択してください")}</div>`;
+        return;
+      }
       const payload = {ingredient_name: ingredientName};
       if (yearsValue !== "") {
         payload.age_years = Number(yearsValue);
@@ -837,10 +867,13 @@
       if (requiredInputs.includes("weight")) {
         payload.weight_kg = weightValue;
       }
-      const indication = document.getElementById("doseIndicationInput").value;
-      const route = document.getElementById("doseRouteInput").value;
+      const indication = contextValues.indication;
+      const route = contextValues.route;
       if (!document.getElementById("doseIndicationField").hidden && indication) payload.indication = indication;
       if (!document.getElementById("doseRouteField").hidden && route) payload.route = route;
+      if (!document.getElementById("doseDosageFormField").hidden && contextValues.dosage_form) payload.dosage_form = contextValues.dosage_form;
+      if (doseRequiredContexts.includes("formulation") && contextValues.formulation) payload.formulation = contextValues.formulation;
+      if (doseRequiredContexts.includes("product") && contextValues.product) payload.product = contextValues.product;
       status.textContent = "小児用量を確認中...";
       try {
         const res = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
