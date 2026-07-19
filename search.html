@@ -1033,6 +1033,7 @@
         ? formatDoseRange(appliedDailyDose.min, appliedDailyDose.max, appliedDailyDose.unit === "mg/day" ? "mg/日" : appliedDailyDose.unit || "")
         : "";
       const hasFixedTreatmentCourse = data.duration_days !== undefined && data.duration_days !== null;
+      const showAppliedDailyDose = hasFixedTreatmentCourse || Boolean(data.display_options && data.display_options.show_applied_daily_dose);
       const dailyLimitText = data.effective_daily_limit_mg !== undefined && data.effective_daily_limit_mg !== null
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
@@ -1068,8 +1069,8 @@
         return `<div class="dose-card">
           <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
           ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
-          ${renderDoseField(divisionDoses.length ? "通常1日理論製剤量" : hasFixedTreatmentCourse ? "1回製剤量" : "理論製剤量", productDose)}
-          ${hasFixedTreatmentCourse && appliedDailyProductDose ? renderDoseField("1日製剤量", appliedDailyProductDose) : ""}
+          ${renderDoseField(divisionDoses.length ? "通常1日理論製剤量" : showAppliedDailyDose ? "1回製剤量" : "理論製剤量", productDose)}
+          ${showAppliedDailyDose && !divisionDoses.length && appliedDailyProductDose ? renderDoseField("1日製剤量", appliedDailyProductDose) : ""}
           ${dividedProductDoses}
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
         </div>`;
@@ -1090,12 +1091,12 @@
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
             ${data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
-            ${hasFixedTreatmentCourse && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
+            ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
             ${normalDailyDoseText ? renderDoseMetric("1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitText ? renderDoseMetric("1日上限", dailyLimitText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与間隔", interval)}
-            ${hasFixedTreatmentCourse && data.administration_interval && data.administration_interval.fixed_times_per_day ? renderDoseMetric("投与回数", `1日${data.administration_interval.fixed_times_per_day}回`) : ""}
+            ${showAppliedDailyDose && data.administration_interval && data.administration_interval.fixed_times_per_day ? renderDoseMetric("投与回数", `1日${data.administration_interval.fixed_times_per_day}回`) : ""}
             ${hasFixedTreatmentCourse ? renderDoseMetric("投与期間", `${data.duration_days}日間`) : ""}
           </div>
           ${renderDoseSource("添付文書原文", data.original_dosage_text)}
