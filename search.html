@@ -961,8 +961,9 @@
         doseRequiredContexts = required;
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
         status.textContent = label;
-        results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
-        renderInlineRequiredContexts(results, required, source);
+        results.innerHTML = "";
+        document.querySelectorAll(".dose-inline-contexts").forEach(node => node.remove());
+        renderInlineRequiredContexts(status, required, source);
         return;
       }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
@@ -981,7 +982,7 @@
     // Keep required context controls next to the message that explains why
     // they are needed. Values are mirrored to the canonical controls so the
     // existing payload builder remains the single source of truth.
-    function renderInlineRequiredContexts(results, requiredContexts, source) {
+    function renderInlineRequiredContexts(anchor, requiredContexts, source) {
       const wrapper = document.createElement("div");
       wrapper.className = "dose-inline-contexts";
       requiredContexts.forEach(contextName => {
@@ -1003,7 +1004,7 @@
         field.append(label, select);
         wrapper.appendChild(field);
       });
-      if (wrapper.children.length) results.appendChild(wrapper);
+      if (wrapper.children.length) anchor.parentNode.insertBefore(wrapper, anchor.nextSibling);
     }
 
     function renderStage6DoseResult(envelope) {
