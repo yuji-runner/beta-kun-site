@@ -1610,11 +1610,61 @@
       document.getElementById("doseRouteField").hidden = true;
     });
 
-    document.getElementById("doseRouteInput").addEventListener("change", () => {
+    async function reevaluateResolvedDoseFromCurrentInputs() {
+      if (!resolvedDoseIngredient) return;
+      const yearsValue = document.getElementById("doseYearsInput").value.trim();
+      const monthsValue = document.getElementById("doseMonthsInput").value.trim();
+      await evaluateResolvedDose(resolvedDoseIngredient, yearsValue, monthsValue);
+    }
+
+    function showProductsForSelectedRoute(route) {
+      const indication = document.getElementById("doseIndicationInput").value;
+      const contexts = (doseCapabilities && doseCapabilities.engine_capabilities || [])
+        .flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : [])
+        .filter(context => context.route === route)
+        .filter(context => !indication || indication === context.indication?.id || indication === context.indication?.label);
+      const options = uniqueDoseOptions(contexts.flatMap(context =>
+        (context.products || []).map(product => {
+          if (!product.product_id) return null;
+          doseContextOptionMeta[product.product_id] = product;
+          return {
+            value: product.product_id,
+            label: product.product_name || product.dosage_form || product.product_id
+          };
+        })
+      ).filter(Boolean));
+      if (options.length <= 1) return false;
+      configureDoseSelect("doseDosageFormInput", options);
+      document.getElementById("doseDosageFormField").hidden = false;
+      document.getElementById("doseContextFields").hidden = false;
+      doseRequiredContexts = ["dosage_form"];
+      document.getElementById("doseStatus").textContent = DOSE_STATUS_LABELS.dosage_form_required;
+      document.getElementById("doseResults").innerHTML = "";
+      return true;
+    }
+
+    document.getElementById("doseIndicationInput").addEventListener("change", async event => {
+      if (!event.target.value) return;
+      configureDoseSelect("doseRouteInput", []);
+      configureDoseSelect("doseDosageFormInput", []);
+      document.getElementById("doseRouteField").hidden = true;
+      document.getElementById("doseDosageFormField").hidden = true;
+      await reevaluateResolvedDoseFromCurrentInputs();
+    });
+
+    document.getElementById("doseRouteInput").addEventListener("change", async event => {
       // Product options belong to the previously selected route. Let the API
-      // return a fresh, route-scoped list on the next evaluation.
+      // return a fresh, route-scoped list without restarting drug resolution.
       configureDoseSelect("doseDosageFormInput", []);
       document.getElementById("doseDosageFormField").hidden = true;
+      if (!event.target.value) return;
+      if (showProductsForSelectedRoute(event.target.value)) return;
+      await reevaluateResolvedDoseFromCurrentInputs();
+    });
+
+    document.getElementById("doseDosageFormInput").addEventListener("change", async event => {
+      if (!event.target.value) return;
+      await reevaluateResolvedDoseFromCurrentInputs();
     });
 
     loadContactCsrfToken();
