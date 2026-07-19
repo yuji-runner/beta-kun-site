@@ -1032,18 +1032,33 @@
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
       const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
-      const products = Array.isArray(data.product_conversion) ? data.product_conversion : [];
+      const divisionDoses = Array.isArray(data.dose_by_division_count) ? data.dose_by_division_count : [];
+      const divisionDoseMetrics = divisionDoses.map(item => {
+        const dose = item.single_dose || {};
+        return renderDoseMetric(`${item.division_count}回分割時の1回成分量`, formatDoseRange(dose.min, dose.max, "mg/回"));
+      }).join("");
+      const dailyProducts = Array.isArray(data.normal_daily_product_conversion) ? data.normal_daily_product_conversion : [];
+      const products = divisionDoses.length ? dailyProducts : (Array.isArray(data.product_conversion) ? data.product_conversion : []);
       const productCards = products.map(product => {
         const display = product.display_product_dose || {};
         const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
         const productWarnings = normalizeList(product.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
         const productDose = display.min !== undefined && display.max !== undefined
-          ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/回` : `${display.min}～${display.max} ${unit}/回`)
+          ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/${divisionDoses.length ? "日" : "回"}` : `${display.min}～${display.max} ${unit}/${divisionDoses.length ? "日" : "回"}`)
           : "";
+        const dividedProductDoses = divisionDoses.map(item => {
+          const converted = normalizeList(item.product_conversion).find(candidate => candidate.product_id === product.product_id) || {};
+          const dividedDisplay = converted.display_product_dose || {};
+          const value = dividedDisplay.min !== undefined && dividedDisplay.max !== undefined
+            ? (String(dividedDisplay.min) === String(dividedDisplay.max) ? `${dividedDisplay.min} ${unit}/回` : `${dividedDisplay.min}～${dividedDisplay.max} ${unit}/回`)
+            : "";
+          return renderDoseField(`${item.division_count}回分割時`, value);
+        }).join("");
         return `<div class="dose-card">
           <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
           ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
-          ${renderDoseField("理論製剤量", productDose)}
+          ${renderDoseField(divisionDoses.length ? "通常1日理論製剤量" : "理論製剤量", productDose)}
+          ${dividedProductDoses}
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
         </div>`;
       }).join("");
@@ -1054,9 +1069,10 @@
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
-            ${renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回"))}
+            ${data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
             ${normalDailyDoseText ? renderDoseMetric("1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitText ? renderDoseMetric("1日上限", dailyLimitText) : ""}
+            ${divisionDoseMetrics}
             ${renderDoseMetric("投与間隔", interval)}
           </div>
           ${renderDoseSource("添付文書原文", data.original_dosage_text)}
