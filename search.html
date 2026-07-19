@@ -1034,7 +1034,7 @@
       const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
       const divisionDoses = Array.isArray(data.dose_by_division_count) ? data.dose_by_division_count : [];
       const divisionDoseMetrics = divisionDoses.map(item => {
-        const dose = item.single_dose || {};
+        const dose = item.display_single_dose || item.single_dose || {};
         return renderDoseMetric(`${item.division_count}回分割時の1回成分量`, formatDoseRange(dose.min, dose.max, "mg/回"));
       }).join("");
       const dailyProducts = Array.isArray(data.normal_daily_product_conversion) ? data.normal_daily_product_conversion : [];
