@@ -959,10 +959,10 @@
         applyContextOptions(source);
         const required = Array.isArray(envelope.required_contexts) ? envelope.required_contexts : [envelope.status.replace("_required", "")];
         doseRequiredContexts = required;
-        const key = required[0];
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
         status.textContent = label;
         results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
+        renderInlineRequiredContexts(results, required, source);
         return;
       }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
@@ -978,6 +978,34 @@
       results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
     }
 
+    // Keep required context controls next to the message that explains why
+    // they are needed. Values are mirrored to the canonical controls so the
+    // existing payload builder remains the single source of truth.
+    function renderInlineRequiredContexts(results, requiredContexts, source) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "dose-inline-contexts";
+      requiredContexts.forEach(contextName => {
+        const original = document.getElementById(contextName === "formulation" || contextName === "product" ? "doseDosageFormInput" : `dose${contextName.charAt(0).toUpperCase()}${contextName.slice(1)}Input`);
+        const options = extractContextOptions(source, contextName);
+        const fallback = original ? Array.from(original.options).filter(option => option.value).map(option => ({value: option.value, label: option.textContent})) : [];
+        const resolved = options.length ? options : fallback;
+        if (!resolved.length) return;
+        const field = document.createElement("div");
+        field.className = "dose-inline-context-field";
+        const label = document.createElement("label");
+        label.textContent = contextName === "route" ? "投与経路" : contextName === "indication" ? "適応症" : contextName === "product" ? "製剤" : "剤形・製剤";
+        const select = document.createElement("select");
+        select.innerHTML = `<option value="">選択してください</option>` + resolved.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+        if (original && original.value) select.value = original.value;
+        select.addEventListener("change", () => {
+          if (original) original.value = select.value;
+        });
+        field.append(label, select);
+        wrapper.appendChild(field);
+      });
+      if (wrapper.children.length) results.appendChild(wrapper);
+    }
+
     function renderStage6DoseResult(envelope) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
@@ -991,10 +1019,13 @@
         const display = product.display_product_dose || {};
         const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
         const productWarnings = normalizeList(product.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+        const productDose = display.min !== undefined && display.max !== undefined
+          ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/回` : `${display.min}～${display.max} ${unit}/回`)
+          : "";
         return `<div class="dose-card">
           <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
           ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
-          ${renderDoseField("理論製剤量", `${display.min || ""}～${display.max || ""} ${unit}/回`)}
+          ${renderDoseField("理論製剤量", productDose)}
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
         </div>`;
       }).join("");
@@ -1005,7 +1036,7 @@
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
-            ${renderDoseMetric("1回量", `${data.single_dose_min_mg || ""}～${data.single_dose_max_mg || ""} mg/回`)}
+            ${renderDoseMetric("1回量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回"))}
             ${renderDoseMetric("1日上限", `${data.effective_daily_limit_mg || ""} mg/日`)}
             ${renderDoseMetric("投与間隔", interval)}
           </div>
@@ -1015,6 +1046,12 @@
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
         <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
       `;
+    }
+
+    function formatDoseRange(min, max, suffix) {
+      if (min === undefined || min === null || min === "") return "";
+      if (max === undefined || max === null || max === "") return `${min} ${suffix}`;
+      return String(min) === String(max) ? `${min} ${suffix}` : `${min}～${max} ${suffix}`;
     }
 
     function renderDoseMetric(label, value) {
