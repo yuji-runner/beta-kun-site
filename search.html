@@ -790,15 +790,24 @@
       })));
       configureDoseSelect("doseIndicationInput", indications);
       configureDoseSelect("doseRouteInput", routes);
-      configureDoseSelect("doseDosageFormInput", dosageForms);
       const showIndication = indications.length > 1;
       const showRoute = routes.length > 1;
       const explicitRequired = Array.isArray(capabilityData.required_context) ? capabilityData.required_context : (Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : []);
-      doseRequiredContexts = explicitRequired.length ? explicitRequired : [];
-      if (!doseRequiredContexts.length && dosageForms.length > 1) doseRequiredContexts.push("dosage_form");
+      // Resolve context in clinical order. Do not mix products from different
+      // routes in the formulation selector before the route is chosen.
+      if (showIndication) {
+        doseRequiredContexts = ["indication"];
+      } else if (showRoute) {
+        doseRequiredContexts = ["route"];
+      } else {
+        doseRequiredContexts = explicitRequired.filter(name => !["indication", "route"].includes(name));
+        if (!doseRequiredContexts.length && dosageForms.length > 1) doseRequiredContexts.push("dosage_form");
+      }
+      const deferDosageForm = showIndication || showRoute;
+      configureDoseSelect("doseDosageFormInput", deferDosageForm ? [] : dosageForms);
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
-      document.getElementById("doseDosageFormField").hidden = !(dosageForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
+      document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(dosageForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
       document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
     }
 
@@ -814,14 +823,26 @@
       }).filter(Boolean));
     }
 
-    function applyContextOptions(source) {
-      const options = extractContextOptions(source, "dosage_form");
-      if (options.length) {
-        configureDoseSelect("doseDosageFormInput", options);
+    function applyContextOptions(source, requiredContexts = []) {
+      const indicationOptions = extractContextOptions(source, "indication");
+      const routeOptions = extractContextOptions(source, "route");
+      const dosageOptions = extractContextOptions(source, "dosage_form");
+      if (indicationOptions.length) configureDoseSelect("doseIndicationInput", indicationOptions);
+      if (routeOptions.length) configureDoseSelect("doseRouteInput", routeOptions.map(option => ({
+        value: option.value,
+        label: option.value === "oral" ? "経口" : option.value === "rectal" ? "直腸" : option.label
+      })));
+      if (requiredContexts.includes("indication")) document.getElementById("doseIndicationField").hidden = false;
+      if (requiredContexts.includes("route")) document.getElementById("doseRouteField").hidden = false;
+      if (dosageOptions.length && requiredContexts.some(name => ["dosage_form", "formulation", "product"].includes(name))) {
+        configureDoseSelect("doseDosageFormInput", dosageOptions);
         document.getElementById("doseDosageFormField").hidden = false;
         document.getElementById("doseContextFields").hidden = false;
       }
-      return options.length;
+      if (requiredContexts.some(name => ["indication", "route"].includes(name))) {
+        document.getElementById("doseContextFields").hidden = false;
+      }
+      return indicationOptions.length + routeOptions.length + dosageOptions.length;
     }
 
     function uniqueDoseOptions(options) {
@@ -964,8 +985,8 @@
         // Required context options may be returned at the envelope level or
         // nested in details/result depending on API version.
         const source = envelope.context_options ? envelope : (envelope.details || envelope.result || envelope);
-        applyContextOptions(source);
         const required = Array.isArray(envelope.required_contexts) ? envelope.required_contexts : [envelope.status.replace("_required", "")];
+        applyContextOptions(source, required);
         doseRequiredContexts = required;
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
         status.textContent = label;
@@ -1579,6 +1600,13 @@
       document.getElementById("doseContextFields").hidden = true;
       document.getElementById("doseIndicationField").hidden = true;
       document.getElementById("doseRouteField").hidden = true;
+    });
+
+    document.getElementById("doseRouteInput").addEventListener("change", () => {
+      // Product options belong to the previously selected route. Let the API
+      // return a fresh, route-scoped list on the next evaluation.
+      configureDoseSelect("doseDosageFormInput", []);
+      document.getElementById("doseDosageFormField").hidden = true;
     });
 
     loadContactCsrfToken();
