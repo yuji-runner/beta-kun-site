@@ -883,6 +883,8 @@
       if (missingContext) {
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">${escapeHtml(DOSE_STATUS_LABELS[`${missingContext}_required`] || "必要な条件を選択してください")}</div>`;
+        const requiredSelect = getRequiredContextSelect(`${missingContext}_required`);
+        if (requiredSelect) requiredSelect.scrollIntoView({behavior: "smooth", block: "center"});
         return;
       }
       const payload = {ingredient_name: ingredientName};
