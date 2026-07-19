@@ -766,8 +766,8 @@
       } catch (error) {
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">${escapeHtml(error.message || "用量情報を取得できませんでした。")}</div>`;
+        scrollToElement(results);
       }
-      scrollToElement(results);
     }
 
     function configureDoseInputs(capabilityData) {
@@ -903,19 +903,23 @@
       if (doseRequiredContexts.includes("formulation") && contextValues.formulation) payload.formulation = contextValues.formulation;
       if (doseRequiredContexts.includes("product") && contextValues.product) payload.product = contextValues.product;
       status.textContent = "小児用量を確認中...";
+      let responseData = null;
       try {
         const res = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        renderUnifiedDoseResult(data);
+        responseData = await res.json();
+        renderUnifiedDoseResult(responseData);
       } catch (error) {
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">用量情報を取得できませんでした。しばらくしてから、もう一度お試しください。</div>`;
       }
-      if (!data || !["dosage_form_required", "formulation_required", "product_required", "route_required", "indication_required"].includes(data.status)) {
+      const requiredSelect = responseData && getRequiredContextSelect(responseData.status);
+      if (requiredSelect) {
+        requiredSelect.scrollIntoView({behavior: "smooth", block: "center"});
+      } else {
         scrollToElement(results);
       }
     }
@@ -962,12 +966,8 @@
         const required = Array.isArray(envelope.required_contexts) ? envelope.required_contexts : [envelope.status.replace("_required", "")];
         doseRequiredContexts = required;
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
-        status.textContent = "";
-        results.innerHTML = `<div class="dose-required-context"><div class="dose-required-context-message">${escapeHtml(label)}</div></div>`;
-        document.querySelectorAll(".dose-inline-contexts").forEach(node => node.remove());
-        const requiredContainer = results.querySelector(".dose-required-context");
-        renderInlineRequiredContexts(requiredContainer, required, source);
-        scrollToElement(requiredContainer);
+        status.textContent = label;
+        results.innerHTML = "";
         return;
       }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
@@ -983,32 +983,15 @@
       results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
     }
 
-    // Keep required context controls next to the message that explains why
-    // they are needed. Values are mirrored to the canonical controls so the
-    // existing payload builder remains the single source of truth.
-    function renderInlineRequiredContexts(anchor, requiredContexts, source) {
-      const wrapper = document.createElement("div");
-      wrapper.className = "dose-inline-contexts";
-      requiredContexts.forEach(contextName => {
-        const original = document.getElementById(contextName === "formulation" || contextName === "product" ? "doseDosageFormInput" : `dose${contextName.charAt(0).toUpperCase()}${contextName.slice(1)}Input`);
-        const options = extractContextOptions(source, contextName);
-        const fallback = original ? Array.from(original.options).filter(option => option.value).map(option => ({value: option.value, label: option.textContent})) : [];
-        const resolved = options.length ? options : fallback;
-        if (!resolved.length) return;
-        const field = document.createElement("div");
-        field.className = "dose-inline-context-field";
-        const label = document.createElement("label");
-        label.textContent = contextName === "route" ? "投与経路" : contextName === "indication" ? "適応症" : contextName === "product" ? "製剤" : "剤形・製剤";
-        const select = document.createElement("select");
-        select.innerHTML = `<option value="">選択してください</option>` + resolved.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
-        if (original && original.value) select.value = original.value;
-        select.addEventListener("change", () => {
-          if (original) original.value = select.value;
-        });
-        field.append(label, select);
-        wrapper.appendChild(field);
-      });
-      if (wrapper.children.length) anchor.appendChild(wrapper);
+    function getRequiredContextSelect(status) {
+      const selectIds = {
+        dosage_form_required: "doseDosageFormInput",
+        formulation_required: "doseDosageFormInput",
+        product_required: "doseDosageFormInput",
+        route_required: "doseRouteInput",
+        indication_required: "doseIndicationInput"
+      };
+      return document.getElementById(selectIds[status] || "");
     }
 
     function renderStage6DoseResult(envelope) {
