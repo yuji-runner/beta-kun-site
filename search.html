@@ -1062,6 +1062,14 @@
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
         </div>`;
       }).join("");
+      const standardDose = data.label_weight_band_standard_dose || null;
+      const standardDoseCard = standardDose ? `<div class="dose-card">
+        <h3>添付文書記載の体重別標準投与量</h3>
+        ${renderDoseField("対象体重", `${standardDose.min_kg_inclusive}kg以上${standardDose.max_kg_exclusive}kg未満`)}
+        ${renderDoseField("1回成分量", `${standardDose.ingredient_dose.value} mg/回`)}
+        ${renderDoseField("1回製剤量", `${standardDose.product_dose.value} ${String(standardDose.product_dose.unit || "").replace("/dose", "/回")}`)}
+        ${renderDoseSource("添付文書記載", standardDose.source_text)}
+      </div>` : "";
       status.textContent = "";
       results.innerHTML = `
         <div class="dose-card">
@@ -1078,6 +1086,7 @@
           ${renderDoseSource("添付文書原文", data.original_dosage_text)}
         </div>
         ${productCards}
+        ${standardDoseCard}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
         <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
       `;
