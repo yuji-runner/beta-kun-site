@@ -840,17 +840,35 @@
         ${assessed ? renderDoseField("判定値", `${calculator && calculator.display_value ? calculator.display_value : assessed.value} ${assessed.unit || ""}`) : ""}
         ${data.reference_value ? renderDoseField("入力・算出された参考指標", `${data.reference_value.value} ${data.reference_value.unit || ""}`) : ""}
         ${data.status === "dialysis_specific_regimen_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者用の投与法を個別に確認してください。")}</div>` : ""}
+        ${data.status === "dialysis_specific_action_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者に対する添付文書上の投与可否を確認してください。")}</div>` : ""}
+        ${renderRenalConditionalConsideration(action)}
         ${renderRenalTitration(action, data.titration_interval || (action && action.titration_interval), Boolean(data.post_dialysis_supplement))}
         ${renderPostDialysisSupplement(data.post_dialysis_supplement)}
         ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
         ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length && !normalizeList(action.titration_stages).length ? renderDoseField("用量・投与間隔", action.instruction || "") : ""}
         ${action && normalizeList(action.cautions).length ? renderDoseMessageList("特に重要な注意", action.cautions, "dose-warning") : ""}
-        ${data.base_regimen && (!data.presentation || data.presentation.show_base_regimen !== false) ? renderDoseField("通常用量", data.base_regimen) : ""}
+        ${data.base_regimen && !(action && action.suppress_base_regimen) && (!data.presentation || data.presentation.show_base_regimen !== false) ? renderDoseField("通常用量", data.base_regimen) : ""}
         ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
       </div>
       ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
       ${notes.length ? renderDoseMessageList("関連情報", notes) : ""}`;
+    }
+
+    function renderRenalConditionalConsideration(action) {
+      const consideration = action && action.conditional_consideration;
+      if (!consideration) return "";
+      const regimen = consideration.candidate_regimen || {};
+      const otherConditions = normalizeList(consideration.other_label_conditions);
+      const factors = normalizeList(consideration.additional_clinical_factors);
+      return `<section class="renal-regimen-section">
+        <h4>【${escapeHtml(consideration.label || "条件付きで考慮される用量")}】</h4>
+        <div class="dose-warning"><strong>β君がこの用量を自動選択・推奨したものではありません。</strong><br>${escapeHtml(consideration.instruction || "追加の臨床評価が必要です。")}</div>
+        ${renderDoseField("添付文書上の考慮対象用量", [regimen.dose, regimen.interval, regimen.daily_dose].filter(Boolean).join(" / "))}
+        ${renderDoseField("今回該当した腎機能条件", consideration.matched_condition || "")}
+        ${otherConditions.length ? renderDoseMessageList("添付文書上の他の考慮条件", otherConditions) : ""}
+        ${factors.length ? renderDoseMessageList("別途確認が必要な臨床要因", factors, "dose-warning") : ""}
+      </section>`;
     }
 
     function renderRenalTitration(action, interval, hasPostDialysisSupplement) {
