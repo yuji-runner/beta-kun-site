@@ -471,19 +471,25 @@
         </div>
       </div>
 
-      <div class="dose-context-grid">
-        <div>
+      <p id="renalMetricGuidance" class="notice">薬剤を選択すると、添付文書が要求する腎機能指標を表示します。</p>
+      <div id="renalDirectInputs" class="dose-context-grid">
+        <div id="renalCcrField">
           <label for="renalCcrInput">CCr（直接入力）</label>
           <input id="renalCcrInput" type="text" inputmode="decimal" placeholder="例：28">
           <p class="note">mL/min</p>
         </div>
+        <div id="renalEgfrField">
+          <label for="renalEgfrInput">eGFR（直接入力）</label>
+          <input id="renalEgfrInput" type="text" inputmode="decimal" placeholder="例：28">
+          <p class="note">mL/min/1.73m²</p>
+        </div>
       </div>
 
       <div class="dose-actions">
-        <button type="button" id="renalAdditionalInputsButton" onclick="toggleRenalAdditionalInputs()" aria-expanded="false">CCrが分からない場合</button>
+        <button type="button" id="renalAdditionalInputsButton" onclick="toggleRenalAdditionalInputs()" aria-expanded="false">推算に必要な情報を入力</button>
       </div>
       <div id="renalAdditionalInputs" class="dose-conditional-fields" hidden>
-        <h3>Cockcroft–Gault式による算出・eGFR参考判定</h3>
+        <h3 id="renalEstimatorHeading">腎機能指標の推算に必要な情報</h3>
         <div class="dose-context-grid">
           <div>
             <label for="renalAgeInput">年齢</label>
@@ -497,7 +503,7 @@
               <option value="female">女性</option>
             </select>
           </div>
-          <div>
+          <div id="renalWeightField">
             <label for="renalWeightInput">実体重</label>
             <input id="renalWeightInput" type="text" inputmode="decimal" placeholder="例：60">
             <p class="note">kg。Cockcroft–Gault式は入力された実体重を用います。肥満など体格によっては評価に注意が必要です。</p>
@@ -507,17 +513,13 @@
             <input id="renalScrInput" type="text" inputmode="decimal" placeholder="例：1.2">
             <p class="note">mg/dL</p>
           </div>
-          <div>
-            <label for="renalEgfrInput">eGFR</label>
-            <input id="renalEgfrInput" type="text" inputmode="decimal" placeholder="例：28">
-            <p class="notice">eGFRとCCrは異なる指標です。CCr基準薬にeGFRを入力した場合は、正式判定ではなく数値の仮当てによる参考情報として表示します。</p>
-          </div>
         </div>
+        <p id="renalEstimatorNotice" class="notice"></p>
       </div>
 
       <div class="dose-actions">
         <button type="button" onclick="evaluateRenalDose()">腎機能判定を確認</button>
-        <span class="note">CCr直接入力を最優先し、次にCockcroft–Gault式、eGFR参考判定の順で評価します。</span>
+        <span id="renalPriorityNotice" class="note">薬剤が要求する指標の直接入力を最優先します。</span>
       </div>
       <div id="renalStatus" class="note">薬剤と腎機能情報を入力してください。</div>
       <div id="renalResults" class="dose-result"></div>
@@ -637,7 +639,7 @@
       const button = document.getElementById("renalAdditionalInputsButton");
       fields.hidden = !fields.hidden;
       button.setAttribute("aria-expanded", String(!fields.hidden));
-      button.textContent = fields.hidden ? "CCrが分からない場合" : "追加入力を閉じる";
+      button.textContent = fields.hidden ? (button.dataset.closedLabel || "推算に必要な情報を入力") : "追加入力を閉じる";
     }
 
     async function searchRenalDrugs(query) {
@@ -675,6 +677,7 @@
         if (!response.ok || data.status !== "matched") throw new Error(data.message || "必要入力を取得できませんでした。");
         renalCapabilities = data;
         renderRenalDrugSpecificContexts(data);
+        renderRenalMetricInputs(data);
       } catch (error) {
         document.getElementById("renalStatus").textContent = error.message;
       }
@@ -702,6 +705,39 @@
       dialysisField.hidden = !(capabilities && capabilities.dialysis_status_required);
       document.getElementById("renalDialysisStatusInput").value = "";
       wrapper.hidden = indicationField.hidden && contextField.hidden && dialysisField.hidden;
+    }
+
+    function renderRenalMetricInputs(capabilities) {
+      const metric = capabilities && capabilities.renal_function_metric;
+      const methods = normalizeList(capabilities && capabilities.accepted_assessment_methods).map(item => item.basis);
+      const directInputs = document.getElementById("renalDirectInputs");
+      const ccrField = document.getElementById("renalCcrField");
+      const egfrField = document.getElementById("renalEgfrField");
+      const weightField = document.getElementById("renalWeightField");
+      const button = document.getElementById("renalAdditionalInputsButton");
+      const heading = document.getElementById("renalEstimatorHeading");
+      const guidance = document.getElementById("renalMetricGuidance");
+      const estimatorNotice = document.getElementById("renalEstimatorNotice");
+      const priorityNotice = document.getElementById("renalPriorityNotice");
+      if (metric === "egfr") {
+        directInputs.prepend(egfrField);
+        weightField.hidden = true;
+        guidance.textContent = "添付文書の判定基準：eGFR（mL/min/1.73m²）。eGFR直接入力を最優先します。";
+        heading.textContent = "日本人成人eGFR式による推算";
+        estimatorNotice.textContent = "eGFR取得方法：β君による日本人成人eGFR式での推算。年齢・性別・血清Crを使用し、体重・身長は使用しません。この式は添付文書に記載された計算式ではありません。";
+        priorityNotice.textContent = "eGFR直接入力を最優先し、未入力時のみ薬剤ルールで許可された日本人成人eGFR式を使用します。CG式CCrは正式判定の代替にしません。";
+        button.dataset.closedLabel = "eGFRが分からない場合";
+      } else {
+        directInputs.prepend(ccrField);
+        weightField.hidden = false;
+        guidance.textContent = "添付文書の判定基準：CCr（mL/min）。CCr直接入力を最優先します。";
+        heading.textContent = "Cockcroft–Gault式によるCCr推算";
+        estimatorNotice.textContent = "eGFRとCCrは異なる指標です。eGFRしかない場合は正式判定せず、CCr閾値への仮当ても行いません。";
+        priorityNotice.textContent = "CCr直接入力を最優先し、未入力時のみ薬剤ルールで許可されたCockcroft–Gault式を使用します。";
+        button.dataset.closedLabel = "CCrが分からない場合";
+      }
+      if (methods.length === 1) button.dataset.closedLabel = "追加入力を表示";
+      if (document.getElementById("renalAdditionalInputs").hidden) button.textContent = button.dataset.closedLabel;
     }
 
     function renalInputValue(id) {
@@ -761,26 +797,38 @@
     function renderRenalDoseResult(data) {
       const results = document.getElementById("renalResults");
       if (data.status === "unable") {
-        results.innerHTML = `<div class="dose-error">${escapeHtml(data.message || "判定に必要な情報が不足しています。")}</div>`;
+        const required = normalizeList(data.required_inputs).join(" / ");
+        results.innerHTML = `<div class="dose-error">${escapeHtml(data.message || "判定に必要な情報が不足しています。")}${required ? `<br>必要な直接入力：${escapeHtml(required)}` : ""}</div>`;
         return;
       }
       if (["indication_required", "indication_not_supported", "treatment_context_required", "treatment_context_not_supported", "dialysis_status_required"].includes(data.status)) {
         results.innerHTML = `<div class="dose-warning">${escapeHtml(data.message || "追加情報を確認してください。")}</div>`;
         return;
       }
-      const action = data.status === "reference_only" ? data.reference_assessment : data.action;
+      const action = data.action;
       const scheduleAction = data.action || null;
       const warnings = normalizeList(data.warnings);
       const notes = normalizeList(data.notes);
+      const assessed = data.assessed_value;
+      const calculator = data.calculator_result;
+      const methodText = data.assessment_basis === "direct_egfr" ? "入力されたeGFR"
+        : data.assessment_basis === "estimated_egfr_japanese_equation" ? "β君による日本人成人eGFR式での推算"
+        : data.assessment_basis === "direct_ccr" ? "入力されたCCr"
+        : data.assessment_basis === "estimated_ccr_cockcroft_gault" ? "β君によるCockcroft–Gault式での推算" : "";
       results.innerHTML = `<div class="dose-card">
         <h3>${escapeHtml(data.ingredient_name || "")}</h3>
-        ${data.status === "reference_only" ? '<div class="dose-warning"><strong>参考判定（正式判定ではありません）</strong><br>入力されたeGFR値をCCr基準へ数値上仮当てした結果です。</div>' : ""}
+        ${data.status === "reference_only" ? '<div class="dose-warning"><strong>参考情報（正式判定ではありません）</strong><br>異なる腎機能指標からの換算や添付文書閾値への仮当ては行っていません。用量区分は表示しません。</div>' : ""}
+        ${assessed ? renderDoseField("添付文書の判定基準", data.renal_function_metric === "egfr" ? "eGFR" : "CCr") : ""}
+        ${assessed ? renderDoseField("腎機能指標の取得方法", methodText) : ""}
+        ${assessed ? renderDoseField("判定値", `${calculator && calculator.display_value ? calculator.display_value : assessed.value} ${assessed.unit || ""}`) : ""}
+        ${data.reference_value ? renderDoseField("入力・算出された参考指標", `${data.reference_value.value} ${data.reference_value.unit || ""}`) : ""}
         ${data.status === "dialysis_specific_regimen_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者用の投与法を個別に確認してください。")}</div>` : ""}
         ${renderRenalTitration(action, data.titration_interval || (action && action.titration_interval), Boolean(data.post_dialysis_supplement))}
         ${renderPostDialysisSupplement(data.post_dialysis_supplement)}
         ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
-        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length && !normalizeList(action.titration_stages).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
+        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length && !normalizeList(action.titration_stages).length ? renderDoseField("用量・投与間隔", action.instruction || "") : ""}
+        ${action && normalizeList(action.cautions).length ? renderDoseMessageList("特に重要な注意", action.cautions, "dose-warning") : ""}
         ${data.base_regimen && (!data.presentation || data.presentation.show_base_regimen !== false) ? renderDoseField("通常用量", data.base_regimen) : ""}
         ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
       </div>
