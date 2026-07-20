@@ -1033,7 +1033,11 @@
         ? formatDoseRange(appliedDailyDose.min, appliedDailyDose.max, appliedDailyDose.unit === "mg/day" ? "mg/日" : appliedDailyDose.unit || "")
         : "";
       const hasFixedTreatmentCourse = data.duration_days !== undefined && data.duration_days !== null;
-      const showAppliedDailyDose = hasFixedTreatmentCourse || Boolean(data.display_options && data.display_options.show_applied_daily_dose);
+      const dailyLimitApplied = Boolean(data.daily_dose_limit_applied) || Boolean(
+        normalDailyDose && data.effective_daily_limit_mg !== undefined && data.effective_daily_limit_mg !== null
+        && Number(normalDailyDose.max) > Number(data.effective_daily_limit_mg)
+      );
+      const showAppliedDailyDose = hasFixedTreatmentCourse || dailyLimitApplied || Boolean(data.display_options && data.display_options.show_applied_daily_dose);
       const dailyLimitText = data.effective_daily_limit_mg !== undefined && data.effective_daily_limit_mg !== null
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
@@ -1045,11 +1049,14 @@
       }).join("");
       const dailyProducts = Array.isArray(data.normal_daily_product_conversion) ? data.normal_daily_product_conversion : [];
       const appliedDailyProducts = Array.isArray(data.applied_daily_product_conversion) ? data.applied_daily_product_conversion : [];
-      const products = divisionDoses.length ? dailyProducts : (Array.isArray(data.product_conversion) ? data.product_conversion : []);
+      const products = divisionDoses.length
+        ? (dailyLimitApplied && appliedDailyProducts.length ? appliedDailyProducts : dailyProducts)
+        : (Array.isArray(data.product_conversion) ? data.product_conversion : []);
       const productCards = products.map(product => {
         const display = product.display_product_dose || {};
         const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
         const productWarnings = normalizeList(product.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+        const productNotes = normalizeList(product.notes).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
         const productDose = display.min !== undefined && display.max !== undefined
           ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/${divisionDoses.length ? "日" : "回"}` : `${display.min}～${display.max} ${unit}/${divisionDoses.length ? "日" : "回"}`)
           : "";
@@ -1069,9 +1076,10 @@
         return `<div class="dose-card">
           <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
           ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
-          ${renderDoseField(divisionDoses.length ? "通常1日理論製剤量" : showAppliedDailyDose ? "1回製剤量" : "理論製剤量", productDose)}
+          ${renderDoseField(divisionDoses.length ? (dailyLimitApplied ? "上限適用後1日製剤量" : "通常1日理論製剤量") : showAppliedDailyDose ? "1回製剤量" : "理論製剤量", productDose)}
           ${showAppliedDailyDose && !divisionDoses.length && appliedDailyProductDose ? renderDoseField("1日製剤量", appliedDailyProductDose) : ""}
           ${dividedProductDoses}
+          ${productNotes.length ? renderDoseMessageList("製剤情報", productNotes) : ""}
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
         </div>`;
       }).join("");
@@ -1120,8 +1128,9 @@
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
             ${data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
+            ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? "理論1日成分量" : "1日成分量", normalDailyDoseText) : ""}
+            ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric("上限適用後1日成分量", appliedDailyDoseText) : ""}
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
-            ${normalDailyDoseText ? renderDoseMetric("1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitText ? renderDoseMetric("1日上限", dailyLimitText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与間隔", interval)}
