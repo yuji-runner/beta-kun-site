@@ -453,6 +453,10 @@
       <p id="renalSelectedDrug" class="note">腎機能判定に対応した薬剤を検索して選択してください。</p>
 
       <div id="renalDrugSpecificContexts" class="dose-conditional-fields" hidden>
+        <div id="renalIndicationField" hidden>
+          <label for="renalIndicationInput">適応症</label>
+          <select id="renalIndicationInput"></select>
+        </div>
         <div id="renalTreatmentContextField" hidden>
           <label for="renalTreatmentContextInput">治療背景</label>
           <select id="renalTreatmentContextInput"></select>
@@ -678,10 +682,18 @@
 
     function renderRenalDrugSpecificContexts(capabilities) {
       const contexts = normalizeList(capabilities && capabilities.treatment_contexts);
+      const indications = normalizeList(capabilities && capabilities.indication_patterns);
       const wrapper = document.getElementById("renalDrugSpecificContexts");
+      const indicationField = document.getElementById("renalIndicationField");
+      const indicationInput = document.getElementById("renalIndicationInput");
       const contextField = document.getElementById("renalTreatmentContextField");
       const contextInput = document.getElementById("renalTreatmentContextInput");
       const dialysisField = document.getElementById("renalDialysisStatusField");
+      indicationField.hidden = indications.length < 2;
+      indicationInput.innerHTML = indications.length
+        ? `<option value="">選択してください</option>${indications.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("")}`
+        : "";
+      if (indications.length === 1) indicationInput.value = indications[0].id;
       contextField.hidden = contexts.length < 2;
       contextInput.innerHTML = contexts.length > 1
         ? `<option value="">選択してください</option>${contexts.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("")}`
@@ -689,7 +701,7 @@
       if (contexts.length === 1) contextInput.value = contexts[0].id;
       dialysisField.hidden = !(capabilities && capabilities.dialysis_status_required);
       document.getElementById("renalDialysisStatusInput").value = "";
-      wrapper.hidden = contextField.hidden && dialysisField.hidden;
+      wrapper.hidden = indicationField.hidden && contextField.hidden && dialysisField.hidden;
     }
 
     function renalInputValue(id) {
@@ -703,6 +715,11 @@
       const ingredientName = resolvedRenalIngredient;
       if (!ingredientName) {
         status.textContent = "対応薬を検索し、候補から選択してください。";
+        results.innerHTML = "";
+        return;
+      }
+      if (renalCapabilities && normalizeList(renalCapabilities.indication_patterns).length > 1 && !renalInputValue("renalIndicationInput")) {
+        status.textContent = "適応症を選択してください。";
         results.innerHTML = "";
         return;
       }
@@ -721,6 +738,7 @@
         sex: renalInputValue("renalSexInput"),
         weight_kg: renalInputValue("renalWeightInput"),
         serum_creatinine_mg_dl: renalInputValue("renalScrInput")
+        ,indication: renalInputValue("renalIndicationInput")
         ,treatment_context: renalInputValue("renalTreatmentContextInput")
         ,dialysis_status: renalInputValue("renalDialysisStatusInput")
       };
@@ -746,7 +764,7 @@
         results.innerHTML = `<div class="dose-error">${escapeHtml(data.message || "判定に必要な情報が不足しています。")}</div>`;
         return;
       }
-      if (["treatment_context_required", "treatment_context_not_supported", "dialysis_status_required"].includes(data.status)) {
+      if (["indication_required", "indication_not_supported", "treatment_context_required", "treatment_context_not_supported", "dialysis_status_required"].includes(data.status)) {
         results.innerHTML = `<div class="dose-warning">${escapeHtml(data.message || "追加情報を確認してください。")}</div>`;
         return;
       }
@@ -758,7 +776,8 @@
         <h3>${escapeHtml(data.ingredient_name || "")}</h3>
         ${data.status === "reference_only" ? '<div class="dose-warning"><strong>参考判定（正式判定ではありません）</strong><br>入力されたeGFR値をCCr基準へ数値上仮当てした結果です。</div>' : ""}
         ${data.status === "dialysis_specific_regimen_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者用の投与法を個別に確認してください。")}</div>` : ""}
-        ${renderRenalTitration(action, data.titration_interval || (action && action.titration_interval))}
+        ${renderRenalTitration(action, data.titration_interval || (action && action.titration_interval), Boolean(data.post_dialysis_supplement))}
+        ${renderPostDialysisSupplement(data.post_dialysis_supplement)}
         ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
         ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length && !normalizeList(action.titration_stages).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
@@ -769,15 +788,32 @@
       ${notes.length ? renderDoseMessageList("関連情報", notes) : ""}`;
     }
 
-    function renderRenalTitration(action, interval) {
+    function renderRenalTitration(action, interval, hasPostDialysisSupplement) {
       const stages = normalizeList(action && action.titration_stages);
       if (!stages.length) return "";
       const range = action && action.daily_dose_range;
       const rangeText = range ? `${range.minimum}～${range.maximum}mg/日` : "";
-      return `<div class="dose-field"><strong>腎機能に応じた投与量</strong>
+      return `<div class="dose-field"><strong>${hasPostDialysisSupplement ? "通常の腎機能別投与法" : "腎機能に応じた投与量"}</strong>
         ${rangeText ? `<div class="renal-schedule-step"><span class="renal-schedule-phase">【1日投与量範囲】</span>${escapeHtml(rangeText)}</div>` : ""}
-        <div class="renal-schedule">${stages.map(stage => `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(stage.label)}】</span>${escapeHtml(stage.dose_per_administration)}<br>${escapeHtml(stage.frequency)}<br><span class="note">${escapeHtml(stage.daily_dose)}</span></div>`).join("")}</div>
+        <div class="renal-schedule">${stages.map(stage => {
+          const options = normalizeList(stage.regimen_options);
+          const stageBody = options.length
+            ? options.map(option => `<div><strong>${escapeHtml(option.label)}</strong><br>${escapeHtml(option.dose)}<br>${escapeHtml(option.interval)}${option.daily_dose ? `<br><span class="note">${escapeHtml(option.daily_dose)}</span>` : ""}</div>`).join("<hr>")
+            : `${escapeHtml(stage.dose_per_administration)}<br>${escapeHtml(stage.frequency)}<br><span class="note">${escapeHtml(stage.daily_dose)}</span>`;
+          return `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(stage.label)}】</span>${stageBody}</div>`;
+        }).join("")}</div>
+        ${stages.some(stage => normalizeList(stage.regimen_options).length > 1) ? '<p class="note">各段階内の複数案から、いずれかを自動的に推奨・確定していません。</p>' : ""}
         ${interval ? `<div class="dose-warning"><strong>増量について</strong><br>${escapeHtml(interval.instruction || "")}</div>` : ""}
+      </div>`;
+    }
+
+    function renderPostDialysisSupplement(supplement) {
+      if (!supplement) return "";
+      const stages = normalizeList(supplement.supplements_by_stage);
+      return `<div class="dose-field"><strong>血液透析後の追加投与</strong>
+        <p class="dose-warning">${escapeHtml(supplement.instruction || "")}</p>
+        <div class="renal-schedule">${stages.map(stage => `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(stage.stage_label)}】</span>${normalizeList(stage.dose_options).map(escapeHtml).join(" または ")}</div>`).join("")}</div>
+        <p class="note">${escapeHtml(supplement.source_text || "")}</p>
       </div>`;
     }
 
