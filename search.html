@@ -1037,7 +1037,8 @@
         normalDailyDose && data.effective_daily_limit_mg !== undefined && data.effective_daily_limit_mg !== null
         && Number(normalDailyDose.max) > Number(data.effective_daily_limit_mg)
       );
-      const showAppliedDailyDose = hasFixedTreatmentCourse || dailyLimitApplied || Boolean(data.display_options && data.display_options.show_applied_daily_dose);
+      const fixedTimesPerDay = data.administration_interval && data.administration_interval.fixed_times_per_day;
+      const showAppliedDailyDose = hasFixedTreatmentCourse || dailyLimitApplied || Boolean(fixedTimesPerDay) || Boolean(data.display_options && data.display_options.show_applied_daily_dose);
       const dailyLimitText = data.effective_daily_limit_mg !== undefined && data.effective_daily_limit_mg !== null
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
@@ -1133,8 +1134,8 @@
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
             ${dailyLimitText ? renderDoseMetric("1日上限", dailyLimitText) : ""}
             ${divisionDoseMetrics}
-            ${renderDoseMetric("投与間隔", interval)}
-            ${showAppliedDailyDose && data.administration_interval && data.administration_interval.fixed_times_per_day ? renderDoseMetric("投与回数", `1日${data.administration_interval.fixed_times_per_day}回`) : ""}
+            ${renderDoseMetric("投与方法", interval)}
+            ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
             ${hasFixedTreatmentCourse ? renderDoseMetric("投与期間", `${data.duration_days}日間`) : ""}
           </div>
           ${renderDoseSource("添付文書原文", data.original_dosage_text)}
