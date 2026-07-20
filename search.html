@@ -460,7 +460,7 @@
         <div id="renalDialysisStatusField" hidden>
           <label for="renalDialysisStatusInput">透析</label>
           <select id="renalDialysisStatusInput">
-            <option value="unknown">不明</option>
+            <option value="">選択してください</option>
             <option value="no">していない</option>
             <option value="yes">している</option>
           </select>
@@ -682,12 +682,13 @@
       const contextField = document.getElementById("renalTreatmentContextField");
       const contextInput = document.getElementById("renalTreatmentContextInput");
       const dialysisField = document.getElementById("renalDialysisStatusField");
-      contextField.hidden = !contexts.length;
-      contextInput.innerHTML = contexts.length
+      contextField.hidden = contexts.length < 2;
+      contextInput.innerHTML = contexts.length > 1
         ? `<option value="">選択してください</option>${contexts.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("")}`
-        : "";
+        : contexts.length === 1 ? `<option value="${escapeHtml(contexts[0].id)}">${escapeHtml(contexts[0].label)}</option>` : "";
+      if (contexts.length === 1) contextInput.value = contexts[0].id;
       dialysisField.hidden = !(capabilities && capabilities.dialysis_status_required);
-      document.getElementById("renalDialysisStatusInput").value = "unknown";
+      document.getElementById("renalDialysisStatusInput").value = "";
       wrapper.hidden = contextField.hidden && dialysisField.hidden;
     }
 
@@ -702,6 +703,11 @@
       const ingredientName = resolvedRenalIngredient;
       if (!ingredientName) {
         status.textContent = "対応薬を検索し、候補から選択してください。";
+        results.innerHTML = "";
+        return;
+      }
+      if (renalCapabilities && renalCapabilities.dialysis_status_required && !renalInputValue("renalDialysisStatusInput")) {
+        status.textContent = "透析の有無を選択してください。";
         results.innerHTML = "";
         return;
       }
@@ -755,7 +761,7 @@
         ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
         ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
-        ${data.base_regimen ? renderDoseField("通常用量", data.base_regimen) : ""}
+        ${data.base_regimen && (!data.presentation || data.presentation.show_base_regimen !== false) ? renderDoseField("通常用量", data.base_regimen) : ""}
         ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
       </div>
       ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
