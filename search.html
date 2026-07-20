@@ -471,15 +471,14 @@
         </div>
       </div>
 
-      <p id="renalMetricGuidance" class="notice">薬剤を選択すると、添付文書が要求する腎機能指標を表示します。</p>
       <div id="renalDirectInputs" class="dose-context-grid">
-        <div id="renalCcrField">
-          <label for="renalCcrInput">CCr（直接入力）</label>
+        <div id="renalCcrField" hidden>
+          <label id="renalCcrLabel" for="renalCcrInput">CCr</label>
           <input id="renalCcrInput" type="text" inputmode="decimal" placeholder="例：28">
           <p class="note">mL/min</p>
         </div>
-        <div id="renalEgfrField">
-          <label for="renalEgfrInput">eGFR（直接入力）</label>
+        <div id="renalEgfrField" hidden>
+          <label id="renalEgfrLabel" for="renalEgfrInput">eGFR</label>
           <input id="renalEgfrInput" type="text" inputmode="decimal" placeholder="例：28">
           <p class="note">mL/min/1.73m²</p>
         </div>
@@ -515,10 +514,15 @@
           </div>
         </div>
         <p id="renalEstimatorNotice" class="notice"></p>
+        <div id="renalAlternateMetricBlock">
+          <h4 id="renalAlternateMetricHeading"></h4>
+          <div id="renalAlternateMetricSlot"></div>
+          <p id="renalAlternateMetricNotice" class="note"></p>
+        </div>
       </div>
 
       <div class="dose-actions">
-        <button type="button" onclick="evaluateRenalDose()">腎機能判定を確認</button>
+        <button type="button" onclick="evaluateRenalDose()">腎機能に基づく用量を確認</button>
         <span id="renalPriorityNotice" class="note">薬剤が要求する指標の直接入力を最優先します。</span>
       </div>
       <div id="renalStatus" class="note">薬剤と腎機能情報を入力してください。</div>
@@ -709,35 +713,48 @@
 
     function renderRenalMetricInputs(capabilities) {
       const metric = capabilities && capabilities.renal_function_metric;
-      const methods = normalizeList(capabilities && capabilities.accepted_assessment_methods).map(item => item.basis);
       const directInputs = document.getElementById("renalDirectInputs");
       const ccrField = document.getElementById("renalCcrField");
       const egfrField = document.getElementById("renalEgfrField");
       const weightField = document.getElementById("renalWeightField");
       const button = document.getElementById("renalAdditionalInputsButton");
+      const additionalInputs = document.getElementById("renalAdditionalInputs");
       const heading = document.getElementById("renalEstimatorHeading");
-      const guidance = document.getElementById("renalMetricGuidance");
       const estimatorNotice = document.getElementById("renalEstimatorNotice");
+      const alternateSlot = document.getElementById("renalAlternateMetricSlot");
+      const alternateHeading = document.getElementById("renalAlternateMetricHeading");
+      const alternateNotice = document.getElementById("renalAlternateMetricNotice");
       const priorityNotice = document.getElementById("renalPriorityNotice");
+      additionalInputs.hidden = true;
+      button.setAttribute("aria-expanded", "false");
       if (metric === "egfr") {
-        directInputs.prepend(egfrField);
+        directInputs.appendChild(egfrField);
+        alternateSlot.appendChild(ccrField);
+        egfrField.hidden = false;
+        ccrField.hidden = false;
         weightField.hidden = true;
-        guidance.textContent = "添付文書の判定基準：eGFR（mL/min/1.73m²）。eGFR直接入力を最優先します。";
-        heading.textContent = "日本人成人eGFR式による推算";
-        estimatorNotice.textContent = "eGFR取得方法：β君による日本人成人eGFR式での推算。年齢・性別・血清Crを使用し、体重・身長は使用しません。この式は添付文書に記載された計算式ではありません。";
-        priorityNotice.textContent = "eGFR直接入力を最優先し、未入力時のみ薬剤ルールで許可された日本人成人eGFR式を使用します。CG式CCrは正式判定の代替にしません。";
-        button.dataset.closedLabel = "eGFRが分からない場合";
+        heading.textContent = "年齢・性別・血清CrからeGFRを推算します";
+        estimatorNotice.textContent = "β君による日本人成人eGFR式での推算です。この式は添付文書に記載された計算式ではありません。";
+        alternateHeading.textContent = "CCrしかわからない場合";
+        alternateNotice.textContent = "CCrではeGFR基準薬の正式な用量判定は行いません。";
+        priorityNotice.textContent = "";
+        priorityNotice.hidden = true;
+        button.dataset.closedLabel = "eGFRがわからない場合";
       } else {
-        directInputs.prepend(ccrField);
+        directInputs.appendChild(ccrField);
+        alternateSlot.appendChild(egfrField);
+        ccrField.hidden = false;
+        egfrField.hidden = false;
         weightField.hidden = false;
-        guidance.textContent = "添付文書の判定基準：CCr（mL/min）。CCr直接入力を最優先します。";
         heading.textContent = "Cockcroft–Gault式によるCCr推算";
-        estimatorNotice.textContent = "eGFRとCCrは異なる指標です。eGFRしかない場合は正式判定せず、CCr閾値への仮当ても行いません。";
+        estimatorNotice.textContent = "年齢・性別・実体重・血清CrからCCrを推算します。";
+        alternateHeading.textContent = "eGFRしかわからない場合";
+        alternateNotice.textContent = "eGFRではCCr基準薬の正式な用量判定は行いません。CCr閾値への仮当ても行いません。";
         priorityNotice.textContent = "CCr直接入力を最優先し、未入力時のみ薬剤ルールで許可されたCockcroft–Gault式を使用します。";
-        button.dataset.closedLabel = "CCrが分からない場合";
+        priorityNotice.hidden = false;
+        button.dataset.closedLabel = "CCrがわからない場合";
       }
-      if (methods.length === 1) button.dataset.closedLabel = "追加入力を表示";
-      if (document.getElementById("renalAdditionalInputs").hidden) button.textContent = button.dataset.closedLabel;
+      if (additionalInputs.hidden) button.textContent = button.dataset.closedLabel;
     }
 
     function renalInputValue(id) {
