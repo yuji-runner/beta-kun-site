@@ -452,6 +452,21 @@
       <div id="renalDrugCandidates" class="renal-drug-candidates" aria-live="polite"></div>
       <p id="renalSelectedDrug" class="note">腎機能判定に対応した薬剤を検索して選択してください。</p>
 
+      <div id="renalDrugSpecificContexts" class="dose-conditional-fields" hidden>
+        <div id="renalTreatmentContextField" hidden>
+          <label for="renalTreatmentContextInput">治療背景</label>
+          <select id="renalTreatmentContextInput"></select>
+        </div>
+        <div id="renalDialysisStatusField" hidden>
+          <label for="renalDialysisStatusInput">透析</label>
+          <select id="renalDialysisStatusInput">
+            <option value="unknown">不明</option>
+            <option value="no">していない</option>
+            <option value="yes">している</option>
+          </select>
+        </div>
+      </div>
+
       <div class="dose-context-grid">
         <div>
           <label for="renalCcrInput">CCr（直接入力）</label>
@@ -595,6 +610,7 @@
     let doseRequiredContexts = [];
     let doseContextOptionMeta = {};
     let resolvedRenalIngredient = "";
+    let renalCapabilities = null;
     let renalSearchTimer = null;
 
     function switchTab(tabName) {
@@ -643,11 +659,36 @@
       }
     }
 
-    function selectRenalDrug(drug) {
+    async function selectRenalDrug(drug) {
       resolvedRenalIngredient = drug.ingredient_name;
       document.getElementById("renalDrugSearchInput").value = drug.ingredient_name;
       document.getElementById("renalDrugCandidates").innerHTML = "";
       document.getElementById("renalSelectedDrug").textContent = `選択中：${drug.ingredient_name}`;
+      renalCapabilities = null;
+      try {
+        const response = await fetch(apiUrl(`/api/renal-dose/capabilities?ingredient_name=${encodeURIComponent(drug.ingredient_name)}`));
+        const data = await response.json();
+        if (!response.ok || data.status !== "matched") throw new Error(data.message || "必要入力を取得できませんでした。");
+        renalCapabilities = data;
+        renderRenalDrugSpecificContexts(data);
+      } catch (error) {
+        document.getElementById("renalStatus").textContent = error.message;
+      }
+    }
+
+    function renderRenalDrugSpecificContexts(capabilities) {
+      const contexts = normalizeList(capabilities && capabilities.treatment_contexts);
+      const wrapper = document.getElementById("renalDrugSpecificContexts");
+      const contextField = document.getElementById("renalTreatmentContextField");
+      const contextInput = document.getElementById("renalTreatmentContextInput");
+      const dialysisField = document.getElementById("renalDialysisStatusField");
+      contextField.hidden = !contexts.length;
+      contextInput.innerHTML = contexts.length
+        ? `<option value="">選択してください</option>${contexts.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.label)}</option>`).join("")}`
+        : "";
+      dialysisField.hidden = !(capabilities && capabilities.dialysis_status_required);
+      document.getElementById("renalDialysisStatusInput").value = "unknown";
+      wrapper.hidden = contextField.hidden && dialysisField.hidden;
     }
 
     function renalInputValue(id) {
@@ -674,6 +715,8 @@
         sex: renalInputValue("renalSexInput"),
         weight_kg: renalInputValue("renalWeightInput"),
         serum_creatinine_mg_dl: renalInputValue("renalScrInput")
+        ,treatment_context: renalInputValue("renalTreatmentContextInput")
+        ,dialysis_status: renalInputValue("renalDialysisStatusInput")
       };
       try {
         const response = await fetch(apiUrl("/api/renal-dose/evaluate"), {
@@ -697,6 +740,10 @@
         results.innerHTML = `<div class="dose-error">${escapeHtml(data.message || "判定に必要な情報が不足しています。")}</div>`;
         return;
       }
+      if (["treatment_context_required", "treatment_context_not_supported", "dialysis_status_required"].includes(data.status)) {
+        results.innerHTML = `<div class="dose-warning">${escapeHtml(data.message || "追加情報を確認してください。")}</div>`;
+        return;
+      }
       const action = data.status === "reference_only" ? data.reference_assessment : data.action;
       const scheduleAction = data.action || null;
       const warnings = normalizeList(data.warnings);
@@ -704,8 +751,10 @@
       results.innerHTML = `<div class="dose-card">
         <h3>${escapeHtml(data.ingredient_name || "")}</h3>
         ${data.status === "reference_only" ? '<div class="dose-warning"><strong>参考判定（正式判定ではありません）</strong><br>入力されたeGFR値をCCr基準へ数値上仮当てした結果です。</div>' : ""}
+        ${data.status === "dialysis_specific_regimen_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者用の投与法を個別に確認してください。")}</div>` : ""}
+        ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
-        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
+        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
         ${data.base_regimen ? renderDoseField("通常用量", data.base_regimen) : ""}
         ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
       </div>
@@ -722,6 +771,14 @@
           : "";
         return `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(step.phase)}】</span>${escapeHtml(step.dose)}${interval ? `<br>${interval}` : ""}</div>`;
       }).join("")}</div></div>`;
+    }
+
+    function renderRenalRegimenOptions(action) {
+      const options = normalizeList(action && action.regimen_options);
+      if (!options.length) return "";
+      return `<div class="dose-field"><strong>投与法の選択肢</strong><div class="renal-schedule">${options.map(option =>
+        `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(option.label)}】</span>${escapeHtml(option.dose)}<br><strong>${escapeHtml(option.interval)}</strong></div>`
+      ).join("")}</div><p class="note">複数案がある場合、いずれかを自動的に推奨・確定していません。</p></div>`;
     }
 
     function scrollToElement(element) {
