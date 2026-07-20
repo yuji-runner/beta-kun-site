@@ -758,14 +758,27 @@
         <h3>${escapeHtml(data.ingredient_name || "")}</h3>
         ${data.status === "reference_only" ? '<div class="dose-warning"><strong>参考判定（正式判定ではありません）</strong><br>入力されたeGFR値をCCr基準へ数値上仮当てした結果です。</div>' : ""}
         ${data.status === "dialysis_specific_regimen_available" ? `<div class="dose-warning">${escapeHtml(data.message || "透析患者用の投与法を個別に確認してください。")}</div>` : ""}
+        ${renderRenalTitration(action, data.titration_interval || (action && action.titration_interval))}
         ${renderRenalRegimenOptions(action)}
         ${renderRenalSchedule(scheduleAction)}
-        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
+        ${action && !normalizeList(scheduleAction && scheduleAction.schedule).length && !normalizeList(action.regimen_options).length && !normalizeList(action.titration_stages).length ? renderDoseField(data.status === "reference_only" ? "参考となる用量・投与間隔" : "用量・投与間隔", action.instruction || "") : ""}
         ${data.base_regimen && (!data.presentation || data.presentation.show_base_regimen !== false) ? renderDoseField("通常用量", data.base_regimen) : ""}
         ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
       </div>
       ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
       ${notes.length ? renderDoseMessageList("関連情報", notes) : ""}`;
+    }
+
+    function renderRenalTitration(action, interval) {
+      const stages = normalizeList(action && action.titration_stages);
+      if (!stages.length) return "";
+      const range = action && action.daily_dose_range;
+      const rangeText = range ? `${range.minimum}～${range.maximum}mg/日` : "";
+      return `<div class="dose-field"><strong>腎機能に応じた投与量</strong>
+        ${rangeText ? `<div class="renal-schedule-step"><span class="renal-schedule-phase">【1日投与量範囲】</span>${escapeHtml(rangeText)}</div>` : ""}
+        <div class="renal-schedule">${stages.map(stage => `<div class="renal-schedule-step"><span class="renal-schedule-phase">【${escapeHtml(stage.label)}】</span>${escapeHtml(stage.dose_per_administration)}<br>${escapeHtml(stage.frequency)}<br><span class="note">${escapeHtml(stage.daily_dose)}</span></div>`).join("")}</div>
+        ${interval ? `<div class="dose-warning"><strong>増量について</strong><br>${escapeHtml(interval.instruction || "")}</div>` : ""}
+      </div>`;
     }
 
     function renderRenalSchedule(action) {
