@@ -327,6 +327,7 @@
   <div class="tab-list" role="tablist" aria-label="検索機能">
     <button id="pmdaTabButton" class="tab-button active" type="button" role="tab" aria-selected="true" aria-controls="pmdaSearchPanel" onclick="switchTab('pmda')">添付文書検索</button>
     <button id="doseTabButton" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="doseSearchPanel" onclick="switchTab('dose')">小児用量</button>
+    <button id="renalTabButton" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="renalAssessmentPanel" onclick="switchTab('renal')">腎機能</button>
   </div>
 
   <section id="pmdaSearchPanel" class="tab-panel active" role="tabpanel" aria-labelledby="pmdaTabButton">
@@ -410,6 +411,63 @@
       </div>
       <div id="doseStatus" class="note">薬品名と必要な患者情報を入力してください。</div>
       <div id="doseResults" class="dose-result"></div>
+    </div>
+  </section>
+
+  <section id="renalAssessmentPanel" class="tab-panel" role="tabpanel" aria-labelledby="renalTabButton">
+    <div class="dose-panel" aria-labelledby="renalAssessmentTitle">
+      <h2 id="renalAssessmentTitle">腎機能別投与判定</h2>
+      <p class="note">添付文書に記載された薬剤ごとの腎機能基準と患者情報を照合します。</p>
+      <p class="notice">eGFRとCCrは異なる指標です。CCr基準薬にeGFRを入力した場合は、正式判定ではなく数値の仮当てによる参考情報として表示します。</p>
+
+      <label for="renalDrugInput">薬剤</label>
+      <select id="renalDrugInput"><option value="">対応薬を読み込み中...</option></select>
+
+      <div class="dose-context-grid">
+        <div>
+          <label for="renalCcrInput">CCr（直接入力）</label>
+          <input id="renalCcrInput" type="text" inputmode="decimal" placeholder="例：28">
+          <p class="note">mL/min</p>
+        </div>
+        <div>
+          <label for="renalEgfrInput">eGFR</label>
+          <input id="renalEgfrInput" type="text" inputmode="decimal" placeholder="例：28">
+          <p class="note">mL/min/1.73m²。CCr基準薬では参考判定のみです。</p>
+        </div>
+      </div>
+
+      <h3>Cockcroft–Gault式による算出に使用する情報</h3>
+      <div class="dose-context-grid">
+        <div>
+          <label for="renalAgeInput">年齢</label>
+          <input id="renalAgeInput" type="number" min="1" max="139" step="1" placeholder="例：70">
+        </div>
+        <div>
+          <label for="renalSexInput">性別</label>
+          <select id="renalSexInput">
+            <option value="">選択してください</option>
+            <option value="male">男性</option>
+            <option value="female">女性</option>
+          </select>
+        </div>
+        <div>
+          <label for="renalWeightInput">体重</label>
+          <input id="renalWeightInput" type="text" inputmode="decimal" placeholder="例：60">
+          <p class="note">kg。初期版では入力された実体重を使用します。</p>
+        </div>
+        <div>
+          <label for="renalScrInput">血清クレアチニン</label>
+          <input id="renalScrInput" type="text" inputmode="decimal" placeholder="例：1.2">
+          <p class="note">mg/dL</p>
+        </div>
+      </div>
+
+      <div class="dose-actions">
+        <button type="button" onclick="evaluateRenalDose()">腎機能判定を確認</button>
+        <span class="note">CCr直接入力を最優先し、次にCockcroft–Gault式、eGFR参考判定の順で評価します。</span>
+      </div>
+      <div id="renalStatus" class="note">薬剤と腎機能情報を入力してください。</div>
+      <div id="renalResults" class="dose-result"></div>
     </div>
   </section>
 
@@ -502,15 +560,111 @@
     let doseCapabilities = null;
     let doseRequiredContexts = [];
     let doseContextOptionMeta = {};
+    let renalDrugsLoaded = false;
 
     function switchTab(tabName) {
       const isDose = tabName === "dose";
-      document.getElementById("pmdaSearchPanel").classList.toggle("active", !isDose);
+      const isRenal = tabName === "renal";
+      const isPmda = !isDose && !isRenal;
+      document.getElementById("pmdaSearchPanel").classList.toggle("active", isPmda);
       document.getElementById("doseSearchPanel").classList.toggle("active", isDose);
-      document.getElementById("pmdaTabButton").classList.toggle("active", !isDose);
+      document.getElementById("renalAssessmentPanel").classList.toggle("active", isRenal);
+      document.getElementById("pmdaTabButton").classList.toggle("active", isPmda);
       document.getElementById("doseTabButton").classList.toggle("active", isDose);
-      document.getElementById("pmdaTabButton").setAttribute("aria-selected", String(!isDose));
+      document.getElementById("renalTabButton").classList.toggle("active", isRenal);
+      document.getElementById("pmdaTabButton").setAttribute("aria-selected", String(isPmda));
       document.getElementById("doseTabButton").setAttribute("aria-selected", String(isDose));
+      document.getElementById("renalTabButton").setAttribute("aria-selected", String(isRenal));
+      if (isRenal) loadRenalDrugs();
+    }
+
+    async function loadRenalDrugs() {
+      if (renalDrugsLoaded) return;
+      const select = document.getElementById("renalDrugInput");
+      try {
+        const response = await fetch(apiUrl("/api/renal-dose/drugs"));
+        const data = await response.json();
+        if (!response.ok || data.status !== "ok") throw new Error(data.message || "対応薬を取得できませんでした。");
+        select.innerHTML = '<option value="">選択してください</option>' + normalizeList(data.drugs).map(drug =>
+          `<option value="${escapeHtml(drug.ingredient_name)}">${escapeHtml(drug.ingredient_name)}</option>`
+        ).join("");
+        renalDrugsLoaded = true;
+      } catch (error) {
+        select.innerHTML = '<option value="">取得できませんでした</option>';
+        document.getElementById("renalStatus").textContent = error.message;
+      }
+    }
+
+    function renalInputValue(id) {
+      const value = document.getElementById(id).value.trim();
+      return value || null;
+    }
+
+    async function evaluateRenalDose() {
+      const status = document.getElementById("renalStatus");
+      const results = document.getElementById("renalResults");
+      const ingredientName = document.getElementById("renalDrugInput").value;
+      if (!ingredientName) {
+        status.textContent = "薬剤を選択してください。";
+        results.innerHTML = "";
+        return;
+      }
+      status.textContent = "判定中...";
+      results.innerHTML = "";
+      const payload = {
+        ingredient_name: ingredientName,
+        ccr_ml_min: renalInputValue("renalCcrInput"),
+        egfr_ml_min_1_73m2: renalInputValue("renalEgfrInput"),
+        age_years: renalInputValue("renalAgeInput"),
+        sex: renalInputValue("renalSexInput"),
+        weight_kg: renalInputValue("renalWeightInput"),
+        serum_creatinine_mg_dl: renalInputValue("renalScrInput")
+      };
+      try {
+        const response = await fetch(apiUrl("/api/renal-dose/evaluate"), {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "腎機能判定に失敗しました。");
+        renderRenalDoseResult(data);
+        status.textContent = "";
+      } catch (error) {
+        status.textContent = "";
+        results.innerHTML = `<div class="dose-error">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderRenalDoseResult(data) {
+      const results = document.getElementById("renalResults");
+      if (data.status === "unable") {
+        results.innerHTML = `<div class="dose-error">${escapeHtml(data.message || "判定に必要な情報が不足しています。")}</div>`;
+        return;
+      }
+      const statusLabels = {
+        confirmed: "正式判定（入力CCr/eGFR）",
+        estimated: "Cockcroft–Gault式による算出値で判定",
+        reference_only: "eGFR値をCCr基準に仮当てした参考判定"
+      };
+      const estimated = data.estimated_cockcroft_gault_ccr || null;
+      const assessed = data.assessed_value || data.reference_value || (estimated ? {value: estimated.value, unit: estimated.unit} : null);
+      const action = data.status === "reference_only" ? data.reference_assessment : data.action;
+      const warnings = normalizeList(data.warnings);
+      const notes = normalizeList(data.notes);
+      results.innerHTML = `<div class="dose-card">
+        <h3>${escapeHtml(data.ingredient_name || "")}</h3>
+        ${renderDoseField("判定区分", statusLabels[data.status] || data.status)}
+        ${renderDoseField("薬剤側の基準", data.renal_function_metric === "ccr" ? "CCr" : "eGFR")}
+        ${assessed ? renderDoseField(data.status === "reference_only" ? "入力eGFR" : estimated ? "Cockcroft–Gault式算出CCr" : "判定値", `${assessed.value} ${assessed.unit}`) : ""}
+        ${estimated ? renderDoseField("体重basis", estimated.weight_basis === "actual_input_weight" ? "入力された実体重" : estimated.weight_basis) : ""}
+        ${action ? renderDoseField("判定", action.label || "") : ""}
+        ${action ? renderDoseField("用量・投与間隔", action.instruction || "") : ""}
+        ${data.base_regimen ? renderDoseField("通常用量", data.base_regimen) : ""}
+        ${data.source ? renderDoseSource("添付文書原文", data.source.source_text || "") : ""}
+      </div>
+      ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
+      ${notes.length ? renderDoseMessageList("関連情報", notes) : ""}`;
     }
 
     function scrollToElement(element) {
@@ -1678,6 +1832,8 @@
       event.preventDefault();
       if (activePanel.id === "doseSearchPanel") {
         evaluateDoseRule();
+      } else if (activePanel.id === "renalAssessmentPanel") {
+        evaluateRenalDose();
       } else {
         search();
       }
