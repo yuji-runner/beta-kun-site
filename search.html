@@ -1319,7 +1319,7 @@
         payload.age_years = Number(yearsValue);
         payload.age_months = Number(monthsValue || "0");
       }
-      if (requiredInputs.includes("weight")) {
+      if (weightValue !== "") {
         payload.weight_kg = weightValue;
       }
       const indication = contextValues.indication;
