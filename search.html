@@ -1737,10 +1737,13 @@
           ${renderDoseField("用量区分", rule.dose_classification)}
           ${renderDoseField("添付文書上の用量", rule.dose_expression_text || rule.prescribed_dose || rule.dose_per_administration)}
           ${renderDoseField("用量調整", rule.adjustment_text)}
-          ${renderDoseField("1日回数", rule.administrations_per_day)}
+          ${renderDoseField("投与回数", rule.administrations_per_day ? `1日${rule.administrations_per_day}回` : "")}
           ${renderDoseField("投与時点", rule.timing)}
           ${renderDoseField("投与経路", rule.route)}
           ${productHtml}
+          ${rule.automatic_product_conversion_enabled === false
+            ? `<div class="notice">製剤換算は行っていません。錠数・分割・丸めは自動表示されません。</div>`
+            : ""}
           ${renderDoseField("製剤換算", rule.formulation_conversion)}
           ${renderDoseField("最大量", rule.max_dose)}
           ${maximumHtml}
