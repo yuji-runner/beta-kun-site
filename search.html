@@ -1680,6 +1680,23 @@
     function renderDoseRuleCard(rule, index, informationalOnly) {
       const title = rule.display_name || rule.age_condition_text || rule.age_condition || `候補${index}`;
       const productMappings = Array.isArray(rule.product_mappings) ? rule.product_mappings : [];
+      const maximum = rule.maximum_regimen || null;
+      const maximumHtml = maximum ? `
+        <div class="dose-field"><strong>最大用量（自動適用なし）</strong>
+          ${renderDoseField("最大1回量", maximum.max_per_dose !== undefined && maximum.max_per_dose !== null ? `${maximum.max_per_dose}mg/回` : "")}
+          ${renderDoseField("最大投与回数", maximum.maximum_frequency ? `1日${maximum.maximum_frequency}回` : "")}
+          ${renderDoseField("最大1日量", maximum.max_daily_dose !== undefined && maximum.max_daily_dose !== null ? `${maximum.max_daily_dose}mg/日` : "")}
+          <div class="notice">最大用量は開始用量へ自動適用されません。</div>
+        </div>` : "";
+      const alternativeHtml = normalizeList(rule.alternative_starting_regimens).map(regimen => `
+        <div class="dose-field"><strong>医療者が選択する開始用量option（自動選択なし）</strong>
+          ${renderDoseField("条件", regimen.condition_text)}
+          ${renderDoseField("1回成分量", regimen.dose && regimen.dose.value !== undefined ? `${regimen.dose.value}mg/回` : "")}
+          ${renderDoseField("投与回数", regimen.times_per_day ? `1日${regimen.times_per_day}回` : "")}
+        </div>`).join("");
+      const monitoringHtml = normalizeList(rule.monitoring).length
+        ? renderDoseMessageList("モニタリング", normalizeList(rule.monitoring), "dose-warning")
+        : "";
       const productHtml = productMappings.length
         ? renderProductMappings(productMappings)
         : [
@@ -1704,6 +1721,9 @@
           ${productHtml}
           ${renderDoseField("製剤換算", rule.formulation_conversion)}
           ${renderDoseField("最大量", rule.max_dose)}
+          ${maximumHtml}
+          ${alternativeHtml}
+          ${monitoringHtml}
           ${renderDoseSource("添付文書原文", rule.source_text)}
           ${renderDoseSource("関連する注意", rule.related_precaution_text)}
           <div class="note">薬剤師確認済み</div>
