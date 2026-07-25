@@ -1449,6 +1449,39 @@
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
       const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+      const maximumRegimen = data.maximum_regimen || null;
+      const maximumSchedules = maximumRegimen ? normalizeList(maximumRegimen.allowed_schedules) : [];
+      const maximumScheduleText = maximumSchedules.map(schedule => {
+        const dose = schedule.max_per_dose !== undefined && schedule.max_per_dose !== null
+          ? `${schedule.max_per_dose}mg/回`
+          : "";
+        const frequency = schedule.times_per_day ? `1日${schedule.times_per_day}回` : "";
+        return [dose, frequency].filter(Boolean).join("・");
+      }).join(" 又は ");
+      const maximumCard = maximumRegimen ? `<div class="dose-card">
+        <h3>最大用量（自動適用なし）</h3>
+        ${renderDoseField("対象体重", [
+          maximumRegimen.weight_min_kg !== undefined && maximumRegimen.weight_min_kg !== null
+            ? `${maximumRegimen.weight_min_kg}kg以上`
+            : "",
+          maximumRegimen.weight_max_kg !== undefined && maximumRegimen.weight_max_kg !== null
+            ? `${maximumRegimen.weight_max_kg}kg未満`
+            : ""
+        ].filter(Boolean).join("・"))}
+        ${renderDoseField("最大1回量", maximumRegimen.max_per_dose !== undefined && maximumRegimen.max_per_dose !== null ? `${maximumRegimen.max_per_dose}mg/回` : "")}
+        ${renderDoseField("最大投与回数", maximumRegimen.maximum_frequency ? `1日${maximumRegimen.maximum_frequency}回` : "")}
+        ${renderDoseField("最大1日量", maximumRegimen.max_daily_dose !== undefined && maximumRegimen.max_daily_dose !== null ? `${maximumRegimen.max_daily_dose}mg/日` : "")}
+        ${renderDoseField("原典の最大用法", maximumScheduleText)}
+        <div class="notice">最大用量は開始用量へ自動適用されません。</div>
+      </div>` : "";
+      const alternativeCards = normalizeList(data.alternative_starting_regimens).map(regimen => `<div class="dose-card">
+        <h3>医療者が選択する開始用量option（自動選択なし）</h3>
+        ${renderDoseField("条件", regimen.condition_text || "")}
+        ${renderDoseField("1回成分量", regimen.dose && regimen.dose.value !== undefined ? `${regimen.dose.value}mg/回` : "")}
+        ${renderDoseField("投与回数", regimen.times_per_day ? `1日${regimen.times_per_day}回` : "")}
+        <div class="notice">患者状態に基づく医療者判断が必要で、自動選択されません。</div>
+      </div>`).join("");
+      const monitoring = normalizeList(data.monitoring).filter(Boolean);
       const divisionDoses = Array.isArray(data.dose_by_division_count) ? data.dose_by_division_count : [];
       const divisionDoseMetrics = divisionDoses.map(item => {
         const dose = item.display_single_dose || item.single_dose || {};
@@ -1549,6 +1582,9 @@
         ${productCards}
         ${standardDoseCard}
         ${conditionalDoseCards}
+        ${maximumCard}
+        ${alternativeCards}
+        ${monitoring.length ? renderDoseMessageList("モニタリング", monitoring, "dose-warning") : ""}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
         <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
       `;
