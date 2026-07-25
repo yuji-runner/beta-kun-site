@@ -1430,6 +1430,7 @@
       const indication = data.indication && (data.indication.label || data.indication.id) || "";
       const routeLabel = data.route === "oral" ? "経口" : data.route === "rectal" ? "直腸" : data.route || "";
       const interval = data.administration_interval && data.administration_interval.original_text || "";
+      const startingSingleDose = data.starting_regimen && data.starting_regimen.display_single_dose || null;
       const normalDailyDose = data.normal_daily_dose || null;
       const normalDailyDoseText = normalDailyDose
         ? formatDoseRange(normalDailyDose.min, normalDailyDose.max, normalDailyDose.unit === "mg/day" ? "mg/日" : normalDailyDose.unit || "")
@@ -1567,7 +1568,7 @@
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
-            ${data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
+            ${startingSingleDose ? renderDoseMetric("理論上の開始1回成分量", formatDoseRange(startingSingleDose.min, startingSingleDose.max, "mg/回")) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
             ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? "理論1日成分量" : "1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric("上限適用後1日成分量", appliedDailyDoseText) : ""}
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
