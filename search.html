@@ -619,6 +619,8 @@
     let doseCapabilities = null;
     let doseRequiredContexts = [];
     let doseContextOptionMeta = {};
+    let lastDoseEvaluationPayload = null;
+    let lastTitrationContext = {};
     let resolvedRenalIngredient = "";
     let renalCapabilities = null;
     let renalSearchTimer = null;
@@ -1332,6 +1334,7 @@
       if (doseRequiredContexts.includes("formulation") && contextValues.formulation) payload.formulation = contextValues.formulation;
       if (doseRequiredContexts.includes("product") && contextValues.product) payload.product = contextValues.product;
       status.textContent = "小児用量を確認中...";
+      lastDoseEvaluationPayload = {...payload};
       let responseData = null;
       try {
         const res = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
@@ -1714,6 +1717,8 @@
       const monitoringHtml = normalizeList(rule.monitoring).length
         ? renderDoseMessageList("モニタリング", normalizeList(rule.monitoring), "dose-warning")
         : "";
+      const titrationHtml = renderClinicalTitration(rule);
+      const administrationTimingHtml = renderAdministrationTiming(rule.administration_timing);
       const productHtml = productMappings.length
         ? renderProductMappings(productMappings)
         : [
@@ -1740,12 +1745,133 @@
           ${renderDoseField("最大量", rule.max_dose)}
           ${maximumHtml}
           ${alternativeHtml}
+          ${administrationTimingHtml}
+          ${titrationHtml}
           ${monitoringHtml}
           ${renderDoseSource("添付文書原文", rule.source_text)}
           ${renderDoseSource("関連する注意", rule.related_precaution_text)}
           <div class="note">薬剤師確認済み</div>
         </div>
       `;
+    }
+
+    function renderAdministrationTiming(timing) {
+      if (!timing) return "";
+      const separations = normalizeList(timing.separation_requirements).map(item => {
+        const substances = normalizeList(item.interacting_substances).join("、");
+        return `<div class="dose-field">
+          ${renderDoseField("対象", substances)}
+          ${renderDoseField("投与間隔", `本剤投与前${item.avoid_before_hours}時間・投与後${item.avoid_after_hours}時間を避ける`)}
+        </div>`;
+      }).join("");
+      return `<div class="dose-card">
+        <h3>服用時点・投与間隔</h3>
+        ${renderDoseField("食事", timing.fasting_requirement || "")}
+        ${separations}
+        <div class="notice">服用時刻は自動生成していません。</div>
+      </div>`;
+    }
+
+    function titrationActionLabel(action) {
+      return {
+        consider_increase: "増量を考慮",
+        consider_minimum_effective_dose: "治療上必要最小限量となるよう減量も考慮",
+        reduce: "減量",
+        hold: "休薬",
+        restart_at_lower_dose: "休薬前より原則一段階減量して再開",
+        consider_discontinuation: "投与中止を考慮"
+      }[action] || action || "";
+    }
+
+    function renderClinicalTitration(rule) {
+      const metadata = rule.titration_information;
+      if (!metadata) return "";
+      const evaluation = rule.titration_evaluation || {};
+      const candidates = normalizeList(evaluation.adjustment_candidates);
+      const missing = normalizeList(evaluation.missing_clinical_context);
+      const ambiguities = normalizeList(evaluation.ambiguities);
+      const observation = evaluation.observation_period || {};
+      const restart = evaluation.restart_evaluation || {};
+      const candidateHtml = candidates.length
+        ? candidates.map(item => `<li>
+            <strong>${escapeHtml(titrationActionLabel(item.action_type))}</strong>
+            ${item.source_text ? `<div class="note">${escapeHtml(item.source_text)}</div>` : ""}
+            <div class="note">自動適用なし・医師または薬剤師の確認が必要</div>
+          </li>`).join("")
+        : "<li>入力条件に該当する調整候補はありません。</li>";
+      const ambiguityHtml = evaluation.boundary_conflict
+        ? `<div class="dose-warning">原典上の範囲が重複しています。候補を自動選択せず、医師・薬剤師の確認が必要です。</div>`
+        : ambiguities.length ? renderDoseMessageList("原典上の曖昧性", ambiguities, "dose-warning") : "";
+      const missingHtml = missing.length
+        ? renderDoseMessageList("判断に必要な追加情報", missing.map(item => ({
+            current_dose_mg_per_day: "現在の1日量",
+            days_on_current_dose: "同一用量の継続日数",
+            treatment_state: "現在の治療状態",
+            prior_dose_before_hold_mg_per_day: "休薬前用量",
+            relevant_history_available: "休薬・治療履歴",
+            platelet_count: "現在の血小板数"
+          }[item] || item)), "dose-warning")
+        : "";
+      const observationHtml = observation.status === "not_met"
+        ? `<div class="dose-warning">同一用量での観察期間が不足しています（必要日数：${escapeHtml(observation.required_days)}日）。</div>`
+        : observation.status === "unknown"
+          ? `<div class="dose-warning">同一用量の継続日数が不明です。</div>` : "";
+      const restartHtml = restart.status && restart.status !== "not_requested"
+        ? `<div class="note">再開評価：${escapeHtml({
+            history_required: "休薬前用量と治療履歴の確認が必要です",
+            insufficient_context: "休薬状態等の情報が不足しています",
+            not_eligible_for_restart: "入力条件では再開候補に該当しません",
+            candidate_available_not_applied: "再開に関する原典候補があります（自動算出なし）"
+          }[restart.status] || restart.status)}</div>` : "";
+      const value = key => escapeHtml(lastTitrationContext[key] ?? "");
+      return `<details class="dose-card clinical-titration">
+        <summary><strong>血小板数に応じた用量調整情報</strong></summary>
+        <div class="notice">原典上の調整候補です。自動適用されず、医師・薬剤師の確認が必要です。</div>
+        <div class="dose-context-grid">
+          <div><label for="titrationPlatelet">現在の血小板数 /μL</label><input id="titrationPlatelet" inputmode="numeric" value="${value("platelet_count")}"></div>
+          <div><label for="titrationCurrentDose">現在の1日量 mg/日</label><input id="titrationCurrentDose" inputmode="decimal" value="${value("current_dose_mg_per_day")}"></div>
+          <div><label for="titrationDays">現在量を継続した日数</label><input id="titrationDays" inputmode="numeric" value="${value("days_on_current_dose")}"></div>
+          <div><label for="titrationState">現在の治療状態</label><select id="titrationState">
+            <option value="">選択してください</option><option value="active" ${lastTitrationContext.treatment_state === "active" ? "selected" : ""}>投与中</option><option value="held" ${lastTitrationContext.treatment_state === "held" ? "selected" : ""}>休薬中</option><option value="unknown" ${lastTitrationContext.treatment_state === "unknown" ? "selected" : ""}>不明</option>
+          </select></div>
+          <div><label for="titrationPriorDose">休薬前の1日量 mg/日</label><input id="titrationPriorDose" inputmode="decimal" value="${value("prior_dose_before_hold_mg_per_day")}"></div>
+          <div><label><input id="titrationHepatic" type="checkbox" ${lastTitrationContext.hepatic_impairment ? "checked" : ""}> 肝機能障害あり</label></div>
+          <div><label><input id="titrationHistory" type="checkbox" ${lastTitrationContext.relevant_history_available ? "checked" : ""}> 治療履歴を確認できる</label></div>
+        </div>
+        <button type="button" onclick="evaluateClinicalTitration()">調整条件を確認</button>
+        ${missingHtml}${observationHtml}${ambiguityHtml}${restartHtml}
+        <ul>${candidateHtml}</ul>
+        <div class="note">選択された調整：なし／適用された調整：なし／推奨用量：表示しません</div>
+      </details>`;
+    }
+
+    async function evaluateClinicalTitration() {
+      if (!lastDoseEvaluationPayload) return;
+      const numberValue = id => {
+        const value = document.getElementById(id)?.value.trim();
+        return value === "" ? undefined : Number(value);
+      };
+      lastTitrationContext = {
+        platelet_count: numberValue("titrationPlatelet"),
+        current_dose_mg_per_day: numberValue("titrationCurrentDose"),
+        days_on_current_dose: numberValue("titrationDays"),
+        treatment_state: document.getElementById("titrationState")?.value || "unknown",
+        prior_dose_before_hold_mg_per_day: numberValue("titrationPriorDose"),
+        hepatic_impairment: Boolean(document.getElementById("titrationHepatic")?.checked),
+        relevant_history_available: Boolean(document.getElementById("titrationHistory")?.checked),
+        evaluate_restart: true
+      };
+      const payload = {...lastDoseEvaluationPayload, titration_context: lastTitrationContext};
+      try {
+        const response = await fetch(apiUrl("/api/pediatric-dose/evaluate"), {
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)
+        });
+        renderUnifiedDoseResult(await response.json());
+      } catch (error) {
+        document.getElementById("doseResults").insertAdjacentHTML(
+          "afterbegin", '<div class="dose-error">調整情報を取得できませんでした。Primary用量は変更されていません。</div>'
+        );
+      }
     }
 
     function renderProductMappings(productMappings) {
