@@ -1433,13 +1433,23 @@
       const indication = data.indication && (data.indication.label || data.indication.id) || "";
       const routeLabel = data.route === "oral" ? "経口" : data.route === "rectal" ? "直腸" : data.route || "";
       const interval = data.administration_interval && data.administration_interval.original_text || "";
-      const startingSingleDose = data.starting_regimen && data.starting_regimen.display_single_dose || null;
+      const displayedStartingSingleDose = data.starting_regimen && data.starting_regimen.display_single_dose || null;
+      const rawStartingSingleDose = data.starting_regimen && data.starting_regimen.raw_single_dose || null;
+      const startingSingleDose = isMicrogramStage6Unit(rawStartingSingleDose && rawStartingSingleDose.unit)
+        ? rawStartingSingleDose
+        : displayedStartingSingleDose;
       const startingSingleDoseUnit = formatStage6IngredientUnit(startingSingleDose && startingSingleDose.unit);
-      const normalDailyDose = data.normal_daily_dose || null;
+      const rawStartingDailyDose = data.starting_regimen && data.starting_regimen.raw_daily_dose || null;
+      const normalDailyDose = data.normal_daily_dose || (
+        isMicrogramStage6Unit(rawStartingDailyDose && rawStartingDailyDose.unit) ? rawStartingDailyDose : null
+      );
       const normalDailyDoseText = normalDailyDose
         ? formatDoseRange(normalDailyDose.min, normalDailyDose.max, formatStage6IngredientUnit(normalDailyDose.unit))
         : "";
-      const appliedDailyDose = data.applied_daily_dose && (data.applied_daily_dose.display || data.applied_daily_dose.raw) || null;
+      const appliedDailyRaw = data.applied_daily_dose && data.applied_daily_dose.raw || null;
+      const appliedDailyDose = isMicrogramStage6Unit(appliedDailyRaw && appliedDailyRaw.unit)
+        ? appliedDailyRaw
+        : data.applied_daily_dose && (data.applied_daily_dose.display || appliedDailyRaw) || null;
       const appliedDailyDoseText = appliedDailyDose
         ? formatDoseRange(appliedDailyDose.min, appliedDailyDose.max, formatStage6IngredientUnit(appliedDailyDose.unit))
         : "";
@@ -1627,6 +1637,10 @@
         .replace("/kg/dose", "/kg/回")
         .replace("/dose", "/回")
         .replace("/day", "/日");
+    }
+
+    function isMicrogramStage6Unit(unit) {
+      return String(unit || "").startsWith("μg/");
     }
 
     function formatDoseRange(min, max, suffix) {
