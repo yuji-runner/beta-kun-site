@@ -1475,6 +1475,19 @@
         ${renderDoseField("原典の最大用法", maximumScheduleText)}
         <div class="notice">最大用量は開始用量へ自動適用されません。</div>
       </div>` : "";
+      const absoluteMaximumCard = !maximumRegimen && dailyLimitText ? `<div class="dose-card">
+        <h3>最大用量（自動適用なし）</h3>
+        ${renderDoseField("最大1日量", dailyLimitText)}
+        <div class="notice">最大用量は開始用量へ自動適用されず、1回量や投与回数の逆算も行いません。</div>
+      </div>` : "";
+      const adjustment = data.adjustment && data.adjustment.text ? data.adjustment : null;
+      const adjustmentCard = adjustment ? `<div class="dose-card">
+        <h3>用量調整（自動適用なし）</h3>
+        ${renderDoseField("調整情報", adjustment.text)}
+        ${adjustment.automatic_application_enabled === false
+          ? `<div class="notice">患者状態に基づく医療者判断が必要で、自動調整されません。</div>`
+          : ""}
+      </div>` : "";
       const alternativeCards = normalizeList(data.alternative_starting_regimens).map(regimen => `<div class="dose-card">
         <h3>医療者が選択する開始用量option（自動選択なし）</h3>
         ${renderDoseField("条件", regimen.condition_text || "")}
@@ -1572,7 +1585,6 @@
             ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? "理論1日成分量" : "1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric("上限適用後1日成分量", appliedDailyDoseText) : ""}
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
-            ${dailyLimitText ? renderDoseMetric("1日上限", dailyLimitText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与方法", interval)}
             ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
@@ -1584,10 +1596,14 @@
         ${standardDoseCard}
         ${conditionalDoseCards}
         ${maximumCard}
+        ${absoluteMaximumCard}
         ${alternativeCards}
+        ${adjustmentCard}
         ${monitoring.length ? renderDoseMessageList("モニタリング", monitoring, "dose-warning") : ""}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
-        <div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>
+        ${data.automatic_product_conversion_enabled === false
+          ? `<div class="notice">製剤換算は行っていません。表示量は有効成分の理論量であり、錠数・分割・丸めを示すものではありません。最終確認は最新の公式添付文書で行ってください。</div>`
+          : `<div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>`}
       `;
     }
 
