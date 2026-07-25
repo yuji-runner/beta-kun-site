@@ -1434,13 +1434,14 @@
       const routeLabel = data.route === "oral" ? "経口" : data.route === "rectal" ? "直腸" : data.route || "";
       const interval = data.administration_interval && data.administration_interval.original_text || "";
       const startingSingleDose = data.starting_regimen && data.starting_regimen.display_single_dose || null;
+      const startingSingleDoseUnit = formatStage6IngredientUnit(startingSingleDose && startingSingleDose.unit);
       const normalDailyDose = data.normal_daily_dose || null;
       const normalDailyDoseText = normalDailyDose
-        ? formatDoseRange(normalDailyDose.min, normalDailyDose.max, normalDailyDose.unit === "mg/day" ? "mg/日" : normalDailyDose.unit || "")
+        ? formatDoseRange(normalDailyDose.min, normalDailyDose.max, formatStage6IngredientUnit(normalDailyDose.unit))
         : "";
       const appliedDailyDose = data.applied_daily_dose && (data.applied_daily_dose.display || data.applied_daily_dose.raw) || null;
       const appliedDailyDoseText = appliedDailyDose
-        ? formatDoseRange(appliedDailyDose.min, appliedDailyDose.max, appliedDailyDose.unit === "mg/day" ? "mg/日" : appliedDailyDose.unit || "")
+        ? formatDoseRange(appliedDailyDose.min, appliedDailyDose.max, formatStage6IngredientUnit(appliedDailyDose.unit))
         : "";
       const hasFixedTreatmentCourse = data.duration_days !== undefined && data.duration_days !== null;
       const dailyLimitApplied = Boolean(data.daily_dose_limit_applied) || Boolean(
@@ -1484,9 +1485,20 @@
         <div class="notice">最大用量は開始用量へ自動適用されず、1回量や投与回数の逆算も行いません。</div>
       </div>` : "";
       const adjustment = data.adjustment && data.adjustment.text ? data.adjustment : null;
+      const prnAlternative = adjustment && adjustment.prn_alternative_regimen || null;
+      const prnDoseText = prnAlternative && prnAlternative.amount !== undefined
+        ? `${prnAlternative.amount} ${formatStage6IngredientUnit(prnAlternative.unit)}`
+        : "";
       const adjustmentCard = adjustment ? `<div class="dose-card">
         <h3>用量調整（自動適用なし）</h3>
         ${renderDoseField("調整情報", adjustment.text)}
+        ${prnAlternative ? `
+          <h4>頓用に関する原典情報</h4>
+          ${renderDoseField("頓用1回成分量", prnDoseText)}
+          ${renderDoseField("投与方法", "必要時に経口投与（回数・最大量は自動決定しません）")}
+          ${renderDoseField("反復時の注意", prnAlternative.repeated_use_precaution || "")}
+          <div class="notice">定時用法から頓用へ自動切替せず、定時用法との合算も行いません。医師・薬剤師の確認が必要です。</div>
+        ` : ""}
         ${adjustment.automatic_application_enabled === false
           ? `<div class="notice">患者状態に基づく医療者判断が必要で、自動調整されません。</div>`
           : ""}
@@ -1584,7 +1596,7 @@
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
-            ${startingSingleDose ? renderDoseMetric("理論上の開始1回成分量", formatDoseRange(startingSingleDose.min, startingSingleDose.max, "mg/回")) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
+            ${startingSingleDose ? renderDoseMetric("理論上の開始1回成分量", formatDoseRange(startingSingleDose.min, startingSingleDose.max, startingSingleDoseUnit)) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
             ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? "理論1日成分量" : "1日成分量", normalDailyDoseText) : ""}
             ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric("上限適用後1日成分量", appliedDailyDoseText) : ""}
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
@@ -1608,6 +1620,13 @@
           ? `<div class="notice">製剤換算は行っていません。表示量は有効成分の理論量であり、錠数・分割・丸めを示すものではありません。最終確認は最新の公式添付文書で行ってください。</div>`
           : `<div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>`}
       `;
+    }
+
+    function formatStage6IngredientUnit(unit) {
+      return String(unit || "")
+        .replace("/kg/dose", "/kg/回")
+        .replace("/dose", "/回")
+        .replace("/day", "/日");
     }
 
     function formatDoseRange(min, max, suffix) {
