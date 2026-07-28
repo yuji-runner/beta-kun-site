@@ -1192,10 +1192,15 @@
       // Prefer explicit context_options from the API. These carry stable values
       // (product/rule identifiers) separately from user-facing labels.
       const explicitFormOptions = extractContextOptions(capabilityData, "dosage_form");
+      const productOptions = productOptionsFromContexts(contexts);
       const dosageForms = explicitFormOptions.length ? explicitFormOptions : uniqueDoseOptions(contexts.map(context => context.dosage_form || context.formulation || context.product_name).filter(Boolean).map(value => ({
         value: typeof value === "object" ? (value.id || value.value || value.label || String(value)) : String(value),
         label: typeof value === "object" ? (value.label || value.name || value.value || String(value)) : formatStage6DosageForm(String(value))
       })));
+      // When the API exposes multiple formal products, preserve product-level
+      // identity instead of collapsing them into a single dosage-form option.
+      // This is required for rules whose matching scope differs by strength.
+      const selectableForms = productOptions.length > 1 ? productOptions : dosageForms;
       configureDoseSelect("doseIndicationInput", indications);
       configureDoseSelect("doseRouteInput", routes);
       const showIndication = indications.length > 1;
@@ -1209,13 +1214,13 @@
         doseRequiredContexts = ["route"];
       } else {
         doseRequiredContexts = explicitRequired.filter(name => !["indication", "route"].includes(name));
-        if (!doseRequiredContexts.length && dosageForms.length > 1) doseRequiredContexts.push("dosage_form");
+        if (!doseRequiredContexts.length && selectableForms.length > 1) doseRequiredContexts.push("dosage_form");
       }
       const deferDosageForm = showIndication || showRoute;
-      configureDoseSelect("doseDosageFormInput", deferDosageForm ? [] : dosageForms);
+      configureDoseSelect("doseDosageFormInput", deferDosageForm ? [] : selectableForms);
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
-      document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(dosageForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
+      document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(selectableForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
       document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
     }
 
@@ -1229,6 +1234,19 @@
         if (value) doseContextOptionMeta[String(value)] = option;
         return value ? {value: String(value), label: String(label)} : null;
       }).filter(Boolean));
+    }
+
+    function productOptionsFromContexts(contexts) {
+      return uniqueDoseOptions(contexts.flatMap(context =>
+        normalizeList(context.products).map(product => {
+          if (!product || !product.product_id) return null;
+          doseContextOptionMeta[String(product.product_id)] = product;
+          return {
+            value: String(product.product_id),
+            label: String(product.product_name || product.dosage_form || product.product_id)
+          };
+        })
+      ).filter(Boolean));
     }
 
     function applyContextOptions(source, requiredContexts = []) {
@@ -1464,6 +1482,7 @@
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
       const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+      const isStartingRegimen = Boolean(data.starting_regimen && data.starting_regimen.role === "starting");
       const maximumRegimen = data.maximum_regimen || null;
       const maximumSchedules = maximumRegimen ? normalizeList(maximumRegimen.allowed_schedules) : [];
       const maximumScheduleText = maximumSchedules.map(schedule => {
@@ -1474,7 +1493,7 @@
         return [dose, frequency].filter(Boolean).join("・");
       }).join(" 又は ");
       const maximumCard = maximumRegimen ? `<div class="dose-card">
-        <h3>最大用量（自動適用なし）</h3>
+        <h3>最大投与量（自動適用なし）</h3>
         ${renderDoseField("対象体重", [
           maximumRegimen.weight_min_kg !== undefined && maximumRegimen.weight_min_kg !== null
             ? `${maximumRegimen.weight_min_kg}kg以上`
@@ -1485,11 +1504,16 @@
         ].filter(Boolean).join("・"))}
         ${renderDoseField("最大1回量", maximumRegimen.max_per_dose !== undefined && maximumRegimen.max_per_dose !== null ? `${maximumRegimen.max_per_dose}mg/回` : "")}
         ${renderDoseField("最大投与回数", maximumRegimen.maximum_frequency ? `1日${maximumRegimen.maximum_frequency}回` : "")}
-        ${renderDoseField("最大1日量", maximumRegimen.max_daily_dose !== undefined && maximumRegimen.max_daily_dose !== null ? `${maximumRegimen.max_daily_dose}mg/日` : "")}
+        ${renderDoseField("最大投与量", maximumRegimen.max_daily_dose !== undefined && maximumRegimen.max_daily_dose !== null ? `${maximumRegimen.max_daily_dose}mg/日` : "")}
         ${renderDoseField("原典の最大用法", maximumScheduleText)}
         <div class="notice">最大用量は開始用量へ自動適用されません。</div>
       </div>` : "";
-      const absoluteMaximumCard = !maximumRegimen && dailyLimitText ? `<div class="dose-card">
+      const startingDoseCapCard = !maximumRegimen && dailyLimitText && isStartingRegimen ? `<div class="dose-card">
+        <h3>開始量上限</h3>
+        ${renderDoseField("開始用量に適用された上限", dailyLimitText)}
+        <div class="notice">この上限は開始量の計算だけに適用され、治療全体の最大投与量ではありません。</div>
+      </div>` : "";
+      const absoluteMaximumCard = !maximumRegimen && dailyLimitText && !isStartingRegimen ? `<div class="dose-card">
         <h3>最大用量（自動適用なし）</h3>
         ${renderDoseField("最大1日量", dailyLimitText)}
         <div class="notice">最大用量は開始用量へ自動適用されず、1回量や投与回数の逆算も行いません。</div>
@@ -1572,7 +1596,8 @@
       </div>` : "";
       const conditionalDoseCards = normalizeList(data.conditional_dose_options).map(option => {
         const single = option.applied_single_dose && (option.applied_single_dose.display || option.applied_single_dose.raw) || {};
-        const daily = option.applied_daily_dose && (option.applied_daily_dose.display || option.applied_daily_dose.raw) || {};
+        const dailyDisplay = option.applied_daily_dose && option.applied_daily_dose.display || {};
+        const dailyRaw = option.applied_daily_dose && option.applied_daily_dose.raw || {};
         const optionWarnings = normalizeList(option.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
         const optionProducts = normalizeList(option.product_conversion);
         const optionDailyProducts = normalizeList(option.applied_daily_product_conversion);
@@ -1587,16 +1612,23 @@
             ${renderDoseField("条件付き増量時1日製剤量", formatDoseRange(perDay.min, perDay.max, `${unit}/日`))}
           </div>`;
         }).join("");
+        const isNonautomaticMaximum = option.id === "nonautomatic_maximum_regimen"
+          && option.automatic_application_enabled === false;
+        const daily = isNonautomaticMaximum && dailyRaw.min !== undefined ? dailyRaw : dailyDisplay;
+        const rawDaily = option.raw_daily_dose_before_limits || {};
         return `<div class="dose-card">
-          <h3>添付文書記載の条件付き増量量</h3>
+          <h3>${isNonautomaticMaximum ? "最大投与量（自動適用なし）" : "添付文書記載の条件付き増量量"}</h3>
           ${renderDoseField("条件", option.condition_text || "")}
           <div class="dose-metric-grid">
-            ${renderDoseMetric("条件付き増量時1回成分量", formatDoseRange(single.min, single.max, "mg/回"))}
-            ${renderDoseMetric("条件付き増量時1日成分量", formatDoseRange(daily.min, daily.max, "mg/日"))}
+            ${isNonautomaticMaximum && rawDaily.min !== undefined
+              ? renderDoseMetric("体重による最大投与量計算値", formatDoseRange(rawDaily.min, rawDaily.max, "mg/日"))
+              : renderDoseMetric("条件付き増量時1回成分量", formatDoseRange(single.min, single.max, "mg/回"))}
+            ${renderDoseMetric(isNonautomaticMaximum ? "最大投与量" : "条件付き増量時1日成分量", formatDoseRange(daily.min, daily.max, "mg/日"))}
             ${renderDoseMetric("投与回数", `1日${option.times_per_day}回`)}
           </div>
           ${option.source_text ? renderDoseSource("添付文書原文", option.source_text) : ""}
           ${optionWarnings.length ? renderDoseMessageList("条件付き増量時の注意", optionWarnings, "dose-warning") : ""}
+          ${isNonautomaticMaximum ? `<div class="notice">最大投与量は開始量へ自動適用されません。</div>` : ""}
         </div>${optionProductCards}`;
       }).join("");
       status.textContent = "";
@@ -1607,9 +1639,9 @@
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
             ${startingSingleDose ? renderDoseMetric("理論上の開始1回成分量", formatDoseRange(startingSingleDose.min, startingSingleDose.max, startingSingleDoseUnit)) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
-            ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? "理論1日成分量" : "1日成分量", normalDailyDoseText) : ""}
-            ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric("上限適用後1日成分量", appliedDailyDoseText) : ""}
-            ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric("1日成分量", appliedDailyDoseText) : ""}
+            ${normalDailyDoseText ? renderDoseMetric(isStartingRegimen ? (dailyLimitApplied ? "開始量計算値" : "開始量") : (dailyLimitApplied ? "理論1日成分量" : "1日成分量"), normalDailyDoseText) : ""}
+            ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric(isStartingRegimen ? "開始量上限適用後" : "上限適用後1日成分量", appliedDailyDoseText) : ""}
+            ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric(isStartingRegimen ? "開始量" : "1日成分量", appliedDailyDoseText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与方法", interval)}
             ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
@@ -1619,6 +1651,7 @@
         </div>
         ${productCards}
         ${standardDoseCard}
+        ${startingDoseCapCard}
         ${conditionalDoseCards}
         ${maximumCard}
         ${absoluteMaximumCard}
