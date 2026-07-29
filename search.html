@@ -1482,7 +1482,16 @@
         ? `${data.effective_daily_limit_mg} mg/日`
         : "";
       const warnings = normalizeList(data.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
-      const isStartingRegimen = Boolean(data.starting_regimen && data.starting_regimen.role === "starting");
+      const regimenRole = data.starting_regimen && data.starting_regimen.role || "starting";
+      const isStartingRegimen = regimenRole === "starting";
+      const primaryRegimenLabel = regimenRole === "maintenance"
+        ? "維持用量"
+        : (regimenRole === "usual" || regimenRole === "primary")
+          ? "通常用量"
+          : "開始量";
+      const primaryRegimenObjectLabel = regimenRole === "maintenance"
+        ? "維持用量"
+        : primaryRegimenLabel;
       const maximumRegimen = data.maximum_regimen || null;
       const maximumSchedules = maximumRegimen ? normalizeList(maximumRegimen.allowed_schedules) : [];
       const maximumScheduleText = maximumSchedules.map(schedule => {
@@ -1506,7 +1515,7 @@
         ${renderDoseField("最大投与回数", maximumRegimen.maximum_frequency ? `1日${maximumRegimen.maximum_frequency}回` : "")}
         ${renderDoseField("最大投与量", maximumRegimen.max_daily_dose !== undefined && maximumRegimen.max_daily_dose !== null ? `${maximumRegimen.max_daily_dose}mg/日` : "")}
         ${renderDoseField("原典の最大用法", maximumScheduleText)}
-        <div class="notice">最大用量は開始用量へ自動適用されません。</div>
+        <div class="notice">最大用量は${primaryRegimenObjectLabel}へ自動適用されません。</div>
       </div>` : "";
       const startingDoseCapCard = !maximumRegimen && dailyLimitText && isStartingRegimen ? `<div class="dose-card">
         <h3>開始量上限</h3>
@@ -1516,7 +1525,7 @@
       const absoluteMaximumCard = !maximumRegimen && dailyLimitText && !isStartingRegimen ? `<div class="dose-card">
         <h3>最大用量（自動適用なし）</h3>
         ${renderDoseField("最大1日量", dailyLimitText)}
-        <div class="notice">最大用量は開始用量へ自動適用されず、1回量や投与回数の逆算も行いません。</div>
+        <div class="notice">最大用量は${primaryRegimenObjectLabel}へ自動適用されず、1回量や投与回数の逆算も行いません。</div>
       </div>` : "";
       const adjustment = data.adjustment && data.adjustment.text ? data.adjustment : null;
       const prnAlternative = adjustment && adjustment.prn_alternative_regimen || null;
@@ -1628,7 +1637,7 @@
           </div>
           ${option.source_text ? renderDoseSource("添付文書原文", option.source_text) : ""}
           ${optionWarnings.length ? renderDoseMessageList("条件付き増量時の注意", optionWarnings, "dose-warning") : ""}
-          ${isNonautomaticMaximum ? `<div class="notice">最大投与量は開始量へ自動適用されません。</div>` : ""}
+          ${isNonautomaticMaximum ? `<div class="notice">最大投与量は${primaryRegimenObjectLabel}へ自動適用されません。</div>` : ""}
         </div>${optionProductCards}`;
       }).join("");
       status.textContent = "";
@@ -1638,10 +1647,10 @@
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
           <div class="dose-metric-grid">
-            ${startingSingleDose ? renderDoseMetric("理論上の開始1回成分量", formatDoseRange(startingSingleDose.min, startingSingleDose.max, startingSingleDoseUnit)) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
-            ${normalDailyDoseText ? renderDoseMetric(isStartingRegimen ? (dailyLimitApplied ? "開始量計算値" : "開始量") : (dailyLimitApplied ? "理論1日成分量" : "1日成分量"), normalDailyDoseText) : ""}
-            ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric(isStartingRegimen ? "開始量上限適用後" : "上限適用後1日成分量", appliedDailyDoseText) : ""}
-            ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric(isStartingRegimen ? "開始量" : "1日成分量", appliedDailyDoseText) : ""}
+            ${startingSingleDose ? renderDoseMetric(`理論上の${primaryRegimenLabel}1回成分量`, formatDoseRange(startingSingleDose.min, startingSingleDose.max, startingSingleDoseUnit)) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
+            ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? `${primaryRegimenLabel}計算値` : primaryRegimenLabel, normalDailyDoseText) : ""}
+            ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric(`${primaryRegimenLabel}上限適用後`, appliedDailyDoseText) : ""}
+            ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric(primaryRegimenLabel, appliedDailyDoseText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与方法", interval)}
             ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
