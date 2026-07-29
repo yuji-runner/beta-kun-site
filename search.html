@@ -1792,6 +1792,8 @@
       const monitoringHtml = normalizeList(rule.monitoring).length
         ? renderDoseMessageList("モニタリング", normalizeList(rule.monitoring), "dose-warning")
         : "";
+      const subsequentRegimenHtml = renderSubsequentRegimen(rule.subsequent_regimen);
+      const nonautomaticTitrationHtml = renderNonautomaticDoseTitration(rule.titration, rule);
       const titrationHtml = renderClinicalTitration(rule);
       const administrationTimingHtml = renderAdministrationTiming(rule.administration_timing);
       const productHtml = productMappings.length
@@ -1823,6 +1825,8 @@
           ${renderDoseField("最大量", rule.max_dose)}
           ${maximumHtml}
           ${alternativeHtml}
+          ${subsequentRegimenHtml}
+          ${nonautomaticTitrationHtml}
           ${administrationTimingHtml}
           ${titrationHtml}
           ${monitoringHtml}
@@ -1831,6 +1835,36 @@
           <div class="note">薬剤師確認済み</div>
         </div>
       `;
+    }
+
+    function renderSubsequentRegimen(regimen) {
+      if (!regimen || regimen.role !== "subsequent_usual") return "";
+      const timing = normalizeList(regimen.timing).join("・");
+      const interval = regimen.minimum_interval_after_start_days;
+      return `<div class="dose-field subsequent-regimen">
+        <strong>後続の通常用量（自動移行なし）</strong>
+        ${renderDoseField("移行可能となる最短間隔", interval !== undefined && interval !== null ? `${interval}日以上` : "")}
+        ${renderDoseField("1日成分量", regimen.daily_dose_mg !== undefined && regimen.daily_dose_mg !== null ? `${regimen.daily_dose_mg}mg/日` : "")}
+        ${renderDoseField("投与回数", regimen.times_per_day ? `1日${regimen.times_per_day}回` : "")}
+        ${renderDoseField("投与時点", timing)}
+        <div class="notice">この後続用量へは自動移行しません。医療者による選択が必要です。</div>
+      </div>`;
+    }
+
+    function renderNonautomaticDoseTitration(titration, rule) {
+      if (!titration || titration.automatic_application_enabled !== false) return "";
+      const increment = titration.increase_increment_mg_per_day;
+      const interval = titration.minimum_interval_between_increases_days;
+      const maximum = titration.maximum_daily_dose_mg !== undefined
+        ? titration.maximum_daily_dose_mg
+        : rule.maximum_daily_dose;
+      return `<div class="dose-field nonautomatic-dose-titration">
+        <strong>適宜増減・1日最高用量（自動適用なし）</strong>
+        ${renderDoseField("増量単位", increment !== undefined && increment !== null ? `1日用量として${increment}mgずつ` : "")}
+        ${renderDoseField("増量間隔", interval !== undefined && interval !== null ? `${interval}日以上` : "")}
+        ${renderDoseField("1日最高用量", maximum !== undefined && maximum !== null && maximum !== "" ? `${maximum}mg/日` : "")}
+        <div class="notice">増量・減量および最高用量への移行は自動適用されません。</div>
+      </div>`;
     }
 
     function renderAdministrationTiming(timing) {

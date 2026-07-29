@@ -45,6 +45,18 @@ class PediatricDoseUiContractTests(unittest.TestCase):
         self.assertNotIn('ingredientName === "アジルサルタン"', HTML)
         self.assertNotIn('data.ingredient_name === "アジルサルタン"', HTML)
 
+    def test_stage5_subsequent_regimen_is_explicit_and_nonautomatic(self):
+        self.assertIn("function renderSubsequentRegimen(regimen)", HTML)
+        self.assertIn('regimen.role !== "subsequent_usual"', HTML)
+        self.assertIn("後続の通常用量（自動移行なし）", HTML)
+        self.assertIn("この後続用量へは自動移行しません。", HTML)
+
+    def test_nonautomatic_fixed_dose_titration_is_separate(self):
+        self.assertIn("function renderNonautomaticDoseTitration(titration, rule)", HTML)
+        self.assertIn("適宜増減・1日最高用量（自動適用なし）", HTML)
+        self.assertIn('renderDoseField("1日最高用量"', HTML)
+        self.assertIn("最高用量への移行は自動適用されません。", HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
