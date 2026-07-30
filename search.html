@@ -1539,6 +1539,67 @@
         ? "維持用量"
         : primaryRegimenLabel;
       const maximumRegimen = data.maximum_regimen || null;
+      const maintenanceRegimen = data.maintenance_regimen || null;
+      const maximumDailyRegimen = data.maximum_daily_regimen || null;
+      const titrationRegimen = data.titration_regimen || null;
+      const regimenProductConversions = data.regimen_product_conversions || {};
+      const renderRegimenProductConversion = (role, label) => {
+        const conversion = regimenProductConversions[role];
+        if (!conversion) return "";
+        const productText = [
+          conversion.product_mg_per_day !== undefined ? `${conversion.product_mg_per_day}mg/日` : "",
+          conversion.product_g_per_day !== undefined ? `${conversion.product_g_per_day}g/日` : ""
+        ].filter(Boolean).join("（") + (
+          conversion.product_mg_per_day !== undefined && conversion.product_g_per_day !== undefined ? "）" : ""
+        );
+        return renderDoseField(`${label}の1日製剤量（原典明示換算）`, productText);
+      };
+      const maintenanceCard = maintenanceRegimen ? `<div class="dose-card">
+        <h3>維持用量（自動切替なし）</h3>
+        ${renderDoseField("原典の維持用量", formatDoseRange(
+          maintenanceRegimen.source_amount?.min,
+          maintenanceRegimen.source_amount?.max,
+          formatStage6IngredientUnit(maintenanceRegimen.source_amount?.unit)
+        ))}
+        ${renderDoseField("計算後の維持用量", formatDoseRange(
+          maintenanceRegimen.calculated_daily_dose?.min,
+          maintenanceRegimen.calculated_daily_dose?.max,
+          "mg/日"
+        ))}
+        ${renderRegimenProductConversion("maintenance", "維持用量")}
+        <div class="notice">維持用量への切替は自動判定しません。</div>
+      </div>` : "";
+      const maximumDailyCard = maximumDailyRegimen ? `<div class="dose-card">
+        <h3>1日最高用量（自動適用なし）</h3>
+        ${renderDoseField("原典の1日最高用量", formatDoseRange(
+          maximumDailyRegimen.source_amount?.min,
+          maximumDailyRegimen.source_amount?.max,
+          formatStage6IngredientUnit(maximumDailyRegimen.source_amount?.unit)
+        ))}
+        ${renderDoseField("計算後の1日最高用量", formatDoseRange(
+          maximumDailyRegimen.calculated_daily_dose?.min,
+          maximumDailyRegimen.calculated_daily_dose?.max,
+          "mg/日"
+        ))}
+        ${renderRegimenProductConversion("maximum", "最高用量")}
+        <div class="notice">最高用量は自動適用されません。</div>
+      </div>` : "";
+      const titrationCard = titrationRegimen ? `<div class="dose-card">
+        <h3>増量方法（自動適用なし）</h3>
+        ${renderDoseField("原典の増量幅上限", formatDoseRange(
+          titrationRegimen.increment_max?.source_amount?.min,
+          titrationRegimen.increment_max?.source_amount?.max,
+          formatStage6IngredientUnit(titrationRegimen.increment_max?.source_amount?.unit)
+        ))}
+        ${renderDoseField("計算上の増量幅上限", formatDoseRange(
+          titrationRegimen.increment_max?.calculated_daily_dose?.min,
+          titrationRegimen.increment_max?.calculated_daily_dose?.max,
+          "mg/日以下"
+        ))}
+        ${renderDoseField("最短増量間隔", `${titrationRegimen.minimum_interval_days}日以上`)}
+        ${renderRegimenProductConversion("titration_increment", "増量幅上限")}
+        <div class="notice">増量日・次回用量を自動判定せず、維持用量又は最高用量へ自動移行しません。</div>
+      </div>` : "";
       const maximumSchedules = maximumRegimen ? normalizeList(maximumRegimen.allowed_schedules) : [];
       const maximumScheduleText = maximumSchedules.map(schedule => {
         const dose = schedule.max_per_dose !== undefined && schedule.max_per_dose !== null
@@ -1720,6 +1781,7 @@
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric(primaryRegimenLabel, appliedDailyDoseText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与方法", interval)}
+            ${renderRegimenProductConversion("starting", "開始用量")}
             ${isBsaDailyRule ? renderDoseMetric("投与回数", `1日${data.administration_interval.frequency_min}～${data.administration_interval.frequency_max}回に分けて投与`) : ""}
             ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
             ${hasFixedTreatmentCourse ? renderDoseMetric("投与期間", `${data.duration_days}日間`) : ""}
@@ -1729,6 +1791,9 @@
         ${productCards}
         ${maximumProductCards}
         ${standardDoseCard}
+        ${titrationCard}
+        ${maintenanceCard}
+        ${maximumDailyCard}
         ${startingDoseCapCard}
         ${conditionalDoseCards}
         ${maximumCard}

@@ -86,6 +86,21 @@ class PediatricDoseUiContractTests(unittest.TestCase):
         self.assertIn("maximum_daily_product_conversion", HTML)
         self.assertIn("1回量・分包量へ自動分割しません", HTML)
 
+    def test_multirole_regimens_are_rendered_separately(self):
+        self.assertIn("data.maintenance_regimen", HTML)
+        self.assertIn("data.maximum_daily_regimen", HTML)
+        self.assertIn("data.titration_regimen", HTML)
+        self.assertIn("維持用量（自動切替なし）", HTML)
+        self.assertIn("1日最高用量（自動適用なし）", HTML)
+        self.assertIn("増量方法（自動適用なし）", HTML)
+        self.assertIn("維持用量への切替は自動判定しません", HTML)
+        self.assertIn("増量日・次回用量を自動判定せず", HTML)
+
+    def test_regimen_product_conversion_is_daily_only(self):
+        self.assertIn("data.regimen_product_conversions", HTML)
+        self.assertIn("1日製剤量（原典明示換算）", HTML)
+        self.assertNotIn("regimenProductConversions[role].per_administration_quantity", HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
