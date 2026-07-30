@@ -98,7 +98,10 @@ class PediatricDoseUiContractTests(unittest.TestCase):
 
     def test_regimen_product_conversion_is_daily_only(self):
         self.assertIn("data.regimen_product_conversions", HTML)
+        self.assertIn("hasRegimenProductConversions", HTML)
         self.assertIn("1日製剤量（原典明示換算）", HTML)
+        self.assertIn("添付文書に明示された1日量換算", HTML)
+        self.assertIn("1回製剤量・分包量・丸めは自動生成しません", HTML)
         self.assertNotIn("regimenProductConversions[role].per_administration_quantity", HTML)
 
     def test_optional_products_reappear_after_indication_selection(self):

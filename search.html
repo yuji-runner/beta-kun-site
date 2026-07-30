@@ -1543,6 +1543,7 @@
       const maximumDailyRegimen = data.maximum_daily_regimen || null;
       const titrationRegimen = data.titration_regimen || null;
       const regimenProductConversions = data.regimen_product_conversions || {};
+      const hasRegimenProductConversions = Object.keys(regimenProductConversions).length > 0;
       const renderRegimenProductConversion = (role, label) => {
         const conversion = regimenProductConversions[role];
         if (!conversion) return "";
@@ -1802,7 +1803,9 @@
         ${adjustmentCard}
         ${monitoring.length ? renderDoseMessageList("モニタリング", monitoring, "dose-warning") : ""}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
-        ${isBsaDailyRule
+        ${hasRegimenProductConversions
+          ? `<div class="notice">表示する製剤量は添付文書に明示された1日量換算です。1回製剤量・分包量・丸めは自動生成しません。</div>`
+          : isBsaDailyRule
           ? `<div class="notice">1日量から1回量を自動計算せず、2回又は3回を自動選択しません。${data.selected_product_id ? "" : "製品未選択のため製剤換算は表示しません。"}</div>`
           : data.automatic_product_conversion_enabled === false
           ? `<div class="notice">製剤換算は行っていません。表示量は有効成分の理論量であり、錠数・分割・丸めを示すものではありません。最終確認は最新の公式添付文書で行ってください。</div>`
