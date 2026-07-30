@@ -2563,7 +2563,7 @@
       await evaluateResolvedDose(resolvedDoseIngredient, yearsValue, monthsValue);
     }
 
-    function showProductsForSelectedRoute(route) {
+    function showProductsForSelectedRoute(route, requireSelection = true) {
       const indication = document.getElementById("doseIndicationInput").value;
       const contexts = (doseCapabilities && doseCapabilities.engine_capabilities || [])
         .flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : [])
@@ -2583,9 +2583,15 @@
       configureDoseSelect("doseDosageFormInput", options);
       document.getElementById("doseDosageFormField").hidden = false;
       document.getElementById("doseContextFields").hidden = false;
-      doseRequiredContexts = ["dosage_form"];
-      document.getElementById("doseStatus").textContent = DOSE_STATUS_LABELS.dosage_form_required;
-      document.getElementById("doseResults").innerHTML = "";
+      if (requireSelection) {
+        doseRequiredContexts = ["dosage_form"];
+        document.getElementById("doseStatus").textContent = DOSE_STATUS_LABELS.dosage_form_required;
+        document.getElementById("doseResults").innerHTML = "";
+      } else {
+        doseRequiredContexts = doseRequiredContexts.filter(
+          context => !["dosage_form", "formulation", "product"].includes(context)
+        );
+      }
       return true;
     }
 
@@ -2596,6 +2602,18 @@
       document.getElementById("doseRouteField").hidden = true;
       document.getElementById("doseDosageFormField").hidden = true;
       await reevaluateResolvedDoseFromCurrentInputs();
+      const stage6 = (doseCapabilities && doseCapabilities.engine_capabilities || [])
+        .find(engine => engine.engine === "stage6");
+      const productIsOptional = Array.isArray(stage6 && stage6.optional_contexts)
+        && stage6.optional_contexts.includes("product");
+      if (productIsOptional) {
+        const contexts = (stage6.contexts || []).filter(context =>
+          event.target.value === context.indication?.id
+          || event.target.value === context.indication?.label
+        );
+        const routes = [...new Set(contexts.map(context => context.route).filter(Boolean))];
+        if (routes.length === 1) showProductsForSelectedRoute(routes[0], false);
+      }
     });
 
     document.getElementById("doseRouteInput").addEventListener("change", async event => {

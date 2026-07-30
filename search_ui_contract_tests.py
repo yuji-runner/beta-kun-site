@@ -101,6 +101,12 @@ class PediatricDoseUiContractTests(unittest.TestCase):
         self.assertIn("1日製剤量（原典明示換算）", HTML)
         self.assertNotIn("regimenProductConversions[role].per_administration_quantity", HTML)
 
+    def test_optional_products_reappear_after_indication_selection(self):
+        self.assertIn("showProductsForSelectedRoute(route, requireSelection = true)", HTML)
+        self.assertIn('stage6.optional_contexts.includes("product")', HTML)
+        self.assertIn("showProductsForSelectedRoute(routes[0], false)", HTML)
+        self.assertIn("doseRequiredContexts.filter", HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
