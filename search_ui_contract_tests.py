@@ -81,6 +81,7 @@ class PediatricDoseUiContractTests(unittest.TestCase):
 
     def test_bsa_product_is_optional_and_daily_conversion_is_label_explicit(self):
         self.assertIn('optionalContexts.includes("product")', HTML)
+        self.assertIn("const products = isBsaDailyRule", HTML)
         self.assertIn('"通常1日製剤量（原典明示換算）"', HTML)
         self.assertIn("maximum_daily_product_conversion", HTML)
         self.assertIn("1回量・分包量へ自動分割しません", HTML)

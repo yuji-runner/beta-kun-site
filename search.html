@@ -1614,7 +1614,9 @@
       const dailyProducts = Array.isArray(data.normal_daily_product_conversion) ? data.normal_daily_product_conversion : [];
       const appliedDailyProducts = Array.isArray(data.applied_daily_product_conversion) ? data.applied_daily_product_conversion : [];
       const maximumDailyProducts = Array.isArray(data.maximum_daily_product_conversion) ? data.maximum_daily_product_conversion : [];
-      const products = divisionDoses.length
+      const products = isBsaDailyRule
+        ? dailyProducts
+        : divisionDoses.length
         ? (dailyLimitApplied && appliedDailyProducts.length ? appliedDailyProducts : dailyProducts)
         : (Array.isArray(data.product_conversion) ? data.product_conversion : []);
       const productCards = products.map(product => {
