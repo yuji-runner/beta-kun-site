@@ -44,6 +44,8 @@ class PediatricDoseUiContractTests(unittest.TestCase):
     def test_no_ingredient_specific_branch(self):
         self.assertNotIn('ingredientName === "アジルサルタン"', HTML)
         self.assertNotIn('data.ingredient_name === "アジルサルタン"', HTML)
+        self.assertNotIn('ingredientName === "フレカイニド酢酸塩"', HTML)
+        self.assertNotIn('data.ingredient_name === "フレカイニド酢酸塩"', HTML)
 
     def test_stage5_subsequent_regimen_is_explicit_and_nonautomatic(self):
         self.assertIn("function renderSubsequentRegimen(regimen)", HTML)
@@ -56,6 +58,32 @@ class PediatricDoseUiContractTests(unittest.TestCase):
         self.assertIn("適宜増減・1日最高用量（自動適用なし）", HTML)
         self.assertIn('renderDoseField("1日最高用量"', HTML)
         self.assertIn("最高用量への移行は自動適用されません。", HTML)
+
+    def test_bsa_is_an_explicit_conditional_input(self):
+        self.assertIn('id="doseBsaFields"', HTML)
+        self.assertIn('id="doseBsaInput"', HTML)
+        self.assertIn('requiredInputs.includes("body_surface_area")', HTML)
+        self.assertIn("payload.body_surface_area_m2 = bodySurfaceAreaValue", HTML)
+        self.assertIn("身長・体重からの自動算出は行いません", HTML)
+
+    def test_bsa_usual_and_maximum_regimens_are_separate(self):
+        self.assertIn('data.dose_basis === "mg_per_m2_per_day"', HTML)
+        self.assertIn('"原典の通常用量"', HTML)
+        self.assertIn('"1日最高用量（自動適用なし）"', HTML)
+        self.assertIn('"計算後の1日最高用量"', HTML)
+        self.assertIn("最大用量は${primaryRegimenObjectLabel}へ自動適用されません。", HTML)
+
+    def test_bsa_frequency_range_does_not_create_per_dose_output(self):
+        self.assertIn("data.administration_interval.frequency_min", HTML)
+        self.assertIn("data.administration_interval.frequency_max", HTML)
+        self.assertIn("1日量から1回量を自動計算せず", HTML)
+        self.assertIn("2回又は3回を自動選択しません", HTML)
+
+    def test_bsa_product_is_optional_and_daily_conversion_is_label_explicit(self):
+        self.assertIn('optionalContexts.includes("product")', HTML)
+        self.assertIn('"通常1日製剤量（原典明示換算）"', HTML)
+        self.assertIn("maximum_daily_product_conversion", HTML)
+        self.assertIn("1回量・分包量へ自動分割しません", HTML)
 
 
 if __name__ == "__main__":

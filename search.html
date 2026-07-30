@@ -418,6 +418,15 @@
         <p id="doseWeightNote" class="note">kg単位で入力してください。</p>
       </div>
 
+      <div id="doseBsaFields" hidden>
+        <label for="doseBsaInput">確認済み体表面積</label>
+        <div class="dose-weight-row">
+          <input id="doseBsaInput" type="text" inputmode="decimal" autocomplete="off" placeholder="例：0.5" aria-describedby="doseBsaNote">
+          <span class="dose-weight-unit">m²</span>
+        </div>
+        <p id="doseBsaNote" class="note">確認済みの体表面積をm²単位で入力してください。身長・体重からの自動算出は行いません。</p>
+      </div>
+
       <div id="doseContextFields" class="dose-context-grid dose-conditional-fields" hidden>
         <div id="doseIndicationField" hidden>
           <label for="doseIndicationInput">適応症</label>
@@ -605,6 +614,7 @@
       no_match: "対応する承認済み用量ルールが見つかりません",
       input_required: "必要な入力項目を確認してください",
       weight_required: "体重を入力してください",
+      body_surface_area_required: "確認済み体表面積を入力してください",
       indication_required: "適応症を選択してください",
       route_required: "投与経路を選択してください",
       dosage_form_required: "剤形・製剤を選択してください",
@@ -1180,6 +1190,9 @@
 
     function configureDoseInputs(capabilityData) {
       const requiredInputs = Array.isArray(capabilityData.required_inputs) ? capabilityData.required_inputs : [];
+      const bodySurfaceAreaRequired = requiredInputs.includes("body_surface_area");
+      document.getElementById("doseBsaFields").hidden = !bodySurfaceAreaRequired;
+      document.getElementById("doseWeightFields").hidden = bodySurfaceAreaRequired;
       const contexts = (capabilityData.engine_capabilities || []).flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : []);
       const indications = uniqueDoseOptions(contexts.map(context => context.indication).filter(Boolean).map(item => ({
         value: item.label || item.id || String(item),
@@ -1208,19 +1221,25 @@
       const explicitRequired = Array.isArray(capabilityData.required_context) ? capabilityData.required_context : (Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : []);
       // Resolve context in clinical order. Do not mix products from different
       // routes in the formulation selector before the route is chosen.
+      const optionalContexts = (capabilityData.engine_capabilities || []).flatMap(
+        engine => Array.isArray(engine.optional_contexts) ? engine.optional_contexts : []
+      );
+      const optionalProductSelection = optionalContexts.includes("product");
       if (showIndication) {
         doseRequiredContexts = ["indication"];
       } else if (showRoute) {
         doseRequiredContexts = ["route"];
       } else {
         doseRequiredContexts = explicitRequired.filter(name => !["indication", "route"].includes(name));
-        if (!doseRequiredContexts.length && selectableForms.length > 1) doseRequiredContexts.push("dosage_form");
+        if (!doseRequiredContexts.length && selectableForms.length > 1 && !optionalProductSelection) {
+          doseRequiredContexts.push("dosage_form");
+        }
       }
       const deferDosageForm = showIndication || showRoute;
       configureDoseSelect("doseDosageFormInput", deferDosageForm ? [] : selectableForms);
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
-      document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(selectableForms.length > 1 || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
+      document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(selectableForms.length > 1 || optionalProductSelection || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
       document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
     }
 
@@ -1301,11 +1320,25 @@
       return "";
     }
 
+    function validateDoseBodySurfaceArea(value) {
+      if (value === "") {
+        return "確認済み体表面積を入力してください。";
+      }
+      if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+        return "体表面積の入力形式を確認してください。";
+      }
+      if (Number(value) <= 0) {
+        return "体表面積は0より大きい値を入力してください。";
+      }
+      return "";
+    }
+
     async function evaluateResolvedDose(ingredientName, yearsValue, monthsValue) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
       const requiredInputs = Array.isArray(doseCapabilities && doseCapabilities.required_inputs) ? doseCapabilities.required_inputs : [];
       const weightValue = document.getElementById("doseWeightInput").value.trim();
+      const bodySurfaceAreaValue = document.getElementById("doseBsaInput").value.trim();
       if (requiredInputs.includes("age") && yearsValue === "") {
         status.textContent = "";
         results.innerHTML = `<div class="dose-error">年齢の『年』を入力してください。0歳の場合は0を入力してください。</div>`;
@@ -1316,6 +1349,14 @@
         if (weightError) {
           status.textContent = "";
           results.innerHTML = `<div class="dose-error">${escapeHtml(weightError)}</div>`;
+          return;
+        }
+      }
+      if (requiredInputs.includes("body_surface_area")) {
+        const bsaError = validateDoseBodySurfaceArea(bodySurfaceAreaValue);
+        if (bsaError) {
+          status.textContent = "";
+          results.innerHTML = `<div class="dose-error">${escapeHtml(bsaError)}</div>`;
           return;
         }
       }
@@ -1341,6 +1382,9 @@
       }
       if (weightValue !== "") {
         payload.weight_kg = weightValue;
+      }
+      if (requiredInputs.includes("body_surface_area")) {
+        payload.body_surface_area_m2 = bodySurfaceAreaValue;
       }
       const indication = contextValues.indication;
       const route = contextValues.route;
@@ -1448,6 +1492,8 @@
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
       const data = envelope.result || {};
+      const isBsaDailyRule = data.dose_basis === "mg_per_m2_per_day";
+      const sourceDose = data.source_dose || null;
       const indication = data.indication && (data.indication.label || data.indication.id) || "";
       const routeLabel = data.route === "oral" ? "経口" : data.route === "rectal" ? "直腸" : data.route || "";
       const interval = data.administration_interval && data.administration_interval.original_text || "";
@@ -1502,7 +1548,13 @@
         return [dose, frequency].filter(Boolean).join("・");
       }).join(" 又は ");
       const maximumCard = maximumRegimen ? `<div class="dose-card">
-        <h3>最大投与量（自動適用なし）</h3>
+        <h3>${isBsaDailyRule ? "1日最高用量（自動適用なし）" : "最大投与量（自動適用なし）"}</h3>
+        ${isBsaDailyRule && maximumRegimen.source_amount
+          ? renderDoseField("原典上の最高用量", `${maximumRegimen.source_amount} ${formatStage6IngredientUnit(maximumRegimen.source_unit)}`)
+          : ""}
+        ${isBsaDailyRule && maximumRegimen.raw_daily_dose
+          ? renderDoseField("計算後の1日最高用量", formatDoseRange(maximumRegimen.raw_daily_dose.min, maximumRegimen.raw_daily_dose.max, "mg/日"))
+          : ""}
         ${renderDoseField("対象体重", [
           maximumRegimen.weight_min_kg !== undefined && maximumRegimen.weight_min_kg !== null
             ? `${maximumRegimen.weight_min_kg}kg以上`
@@ -1561,6 +1613,7 @@
       }).join("");
       const dailyProducts = Array.isArray(data.normal_daily_product_conversion) ? data.normal_daily_product_conversion : [];
       const appliedDailyProducts = Array.isArray(data.applied_daily_product_conversion) ? data.applied_daily_product_conversion : [];
+      const maximumDailyProducts = Array.isArray(data.maximum_daily_product_conversion) ? data.maximum_daily_product_conversion : [];
       const products = divisionDoses.length
         ? (dailyLimitApplied && appliedDailyProducts.length ? appliedDailyProducts : dailyProducts)
         : (Array.isArray(data.product_conversion) ? data.product_conversion : []);
@@ -1569,8 +1622,9 @@
         const unit = product.product_unit === "suppository" ? "個" : product.product_unit || "";
         const productWarnings = normalizeList(product.warnings).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
         const productNotes = normalizeList(product.notes).map(item => typeof item === "object" ? item.text : item).filter(Boolean);
+        const productDosePeriod = divisionDoses.length || isBsaDailyRule ? "日" : "回";
         const productDose = display.min !== undefined && display.max !== undefined
-          ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/${divisionDoses.length ? "日" : "回"}` : `${display.min}～${display.max} ${unit}/${divisionDoses.length ? "日" : "回"}`)
+          ? (String(display.min) === String(display.max) ? `${display.min} ${unit}/${productDosePeriod}` : `${display.min}～${display.max} ${unit}/${productDosePeriod}`)
           : "";
         const appliedDailyProduct = appliedDailyProducts.find(candidate => candidate.product_id === product.product_id) || {};
         const appliedDailyDisplay = appliedDailyProduct.display_product_dose || {};
@@ -1588,11 +1642,20 @@
         return `<div class="dose-card">
           <h3>${escapeHtml(product.product_name || product.dosage_form || "製剤")}</h3>
           ${renderDoseField("剤形・規格", [formatStage6DosageForm(product.dosage_form), product.strength].filter(Boolean).join(" / "))}
-          ${renderDoseField(divisionDoses.length ? (dailyLimitApplied ? "上限適用後1日製剤量" : "通常1日理論製剤量") : showAppliedDailyDose ? "1回製剤量" : "理論製剤量", productDose)}
+          ${renderDoseField(isBsaDailyRule ? "通常1日製剤量（原典明示換算）" : divisionDoses.length ? (dailyLimitApplied ? "上限適用後1日製剤量" : "通常1日理論製剤量") : showAppliedDailyDose ? "1回製剤量" : "理論製剤量", productDose)}
           ${showAppliedDailyDose && !divisionDoses.length && appliedDailyProductDose ? renderDoseField("1日製剤量", appliedDailyProductDose) : ""}
           ${dividedProductDoses}
           ${productNotes.length ? renderDoseMessageList("製剤情報", productNotes) : ""}
           ${productWarnings.length ? renderDoseMessageList("注意", productWarnings, "dose-warning") : ""}
+        </div>`;
+      }).join("");
+      const maximumProductCards = maximumDailyProducts.map(product => {
+        const display = product.display_product_dose || {};
+        const unit = product.product_unit || "";
+        return `<div class="dose-card">
+          <h3>${escapeHtml(product.product_name || "製剤")}の1日最高製剤量</h3>
+          ${renderDoseField("原典明示換算後", formatDoseRange(display.min, display.max, `${unit}/日`))}
+          <div class="notice">最高製剤量は自動適用されず、1回量・分包量へ自動分割しません。</div>
         </div>`;
       }).join("");
       const standardDose = data.label_weight_band_standard_dose || null;
@@ -1646,19 +1709,23 @@
           <h3>${escapeHtml(data.ingredient_name || "")}</h3>
           ${renderDoseField("適応症", indication)}
           ${renderDoseField("投与経路", routeLabel)}
+          ${isBsaDailyRule ? renderDoseField("使用した確認済み体表面積", `${data.body_surface_area_m2} m²`) : ""}
           <div class="dose-metric-grid">
+            ${isBsaDailyRule && sourceDose ? renderDoseMetric("原典の通常用量", formatDoseRange(sourceDose.min, sourceDose.max, formatStage6IngredientUnit(sourceDose.unit))) : ""}
             ${startingSingleDose ? renderDoseMetric(`理論上の${primaryRegimenLabel}1回成分量`, formatDoseRange(startingSingleDose.min, startingSingleDose.max, startingSingleDoseUnit)) : data.single_dose_min_mg !== undefined && data.single_dose_min_mg !== null ? renderDoseMetric("1回成分量", formatDoseRange(data.single_dose_min_mg, data.single_dose_max_mg, "mg/回")) : ""}
             ${normalDailyDoseText ? renderDoseMetric(dailyLimitApplied ? `${primaryRegimenLabel}計算値` : primaryRegimenLabel, normalDailyDoseText) : ""}
             ${dailyLimitApplied && appliedDailyDoseText ? renderDoseMetric(`${primaryRegimenLabel}上限適用後`, appliedDailyDoseText) : ""}
             ${showAppliedDailyDose && !normalDailyDoseText && appliedDailyDoseText ? renderDoseMetric(primaryRegimenLabel, appliedDailyDoseText) : ""}
             ${divisionDoseMetrics}
             ${renderDoseMetric("投与方法", interval)}
+            ${isBsaDailyRule ? renderDoseMetric("投与回数", `1日${data.administration_interval.frequency_min}～${data.administration_interval.frequency_max}回に分けて投与`) : ""}
             ${showAppliedDailyDose && fixedTimesPerDay ? renderDoseMetric("投与回数", `1日${fixedTimesPerDay}回`) : ""}
             ${hasFixedTreatmentCourse ? renderDoseMetric("投与期間", `${data.duration_days}日間`) : ""}
           </div>
           ${renderDoseSource("添付文書原文", data.original_dosage_text)}
         </div>
         ${productCards}
+        ${maximumProductCards}
         ${standardDoseCard}
         ${startingDoseCapCard}
         ${conditionalDoseCards}
@@ -1668,7 +1735,9 @@
         ${adjustmentCard}
         ${monitoring.length ? renderDoseMessageList("モニタリング", monitoring, "dose-warning") : ""}
         ${warnings.length ? renderDoseMessageList("注意", warnings, "dose-warning") : ""}
-        ${data.automatic_product_conversion_enabled === false
+        ${isBsaDailyRule
+          ? `<div class="notice">1日量から1回量を自動計算せず、2回又は3回を自動選択しません。${data.selected_product_id ? "" : "製品未選択のため製剤換算は表示しません。"}</div>`
+          : data.automatic_product_conversion_enabled === false
           ? `<div class="notice">製剤換算は行っていません。表示量は有効成分の理論量であり、錠数・分割・丸めを示すものではありません。最終確認は最新の公式添付文書で行ってください。</div>`
           : `<div class="notice">表示する製剤量は理論上の換算値です。参考情報であり、処方提案ではありません。最終確認は最新の公式添付文書で行ってください。</div>`}
       `;
@@ -1676,6 +1745,7 @@
 
     function formatStage6IngredientUnit(unit) {
       return String(unit || "")
+        .replace("/m2/day", "/m²/日")
         .replace("/kg/dose", "/kg/回")
         .replace("/dose", "/回")
         .replace("/day", "/日");
@@ -2408,6 +2478,8 @@
       document.getElementById("doseContextFields").hidden = true;
       document.getElementById("doseIndicationField").hidden = true;
       document.getElementById("doseRouteField").hidden = true;
+      document.getElementById("doseBsaFields").hidden = true;
+      document.getElementById("doseWeightFields").hidden = false;
     });
 
     document.getElementById("renalDrugSearchInput").addEventListener("input", event => {
