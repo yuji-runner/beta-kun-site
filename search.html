@@ -440,6 +440,15 @@
           <label for="doseDosageFormInput">剤形・製剤</label>
           <select id="doseDosageFormInput"><option value="">選択してください</option></select>
         </div>
+        <div id="doseTherapyRoleField" hidden>
+          <label for="doseTherapyRoleInput">治療形態</label>
+          <select id="doseTherapyRoleInput"><option value="">選択してください</option></select>
+        </div>
+        <div id="doseInducerStatusField" hidden>
+          <label for="doseInducerStatusInput">代謝促進抗てんかん薬の併用</label>
+          <select id="doseInducerStatusInput"><option value="">選択してください</option></select>
+          <p class="note">フェニトイン、ホスフェニトイン、カルバマゼピンの併用状態を明示選択してください。薬剤名から自動判定しません。</p>
+        </div>
       </div>
 
       <div class="dose-actions">
@@ -620,6 +629,8 @@
       dosage_form_required: "剤形・製剤を選択してください",
       formulation_required: "剤形・製剤を選択してください",
       product_required: "製剤を選択してください",
+      therapy_role_required: "治療形態を選択してください",
+      inducer_status_required: "代謝促進抗てんかん薬の併用状態を選択してください",
       stage6_weight_scope_exceeded: "この体重は現在の小児体重換算検索の対象範囲外です",
       invalid_decimal_input: "体重の入力形式を確認してください",
       dose_engine_required: "複数の用量体系があります。条件を選択してください",
@@ -1205,6 +1216,9 @@
       // Prefer explicit context_options from the API. These carry stable values
       // (product/rule identifiers) separately from user-facing labels.
       const explicitFormOptions = extractContextOptions(capabilityData, "dosage_form");
+      const stage6Capability = (capabilityData.engine_capabilities || []).find(engine => engine.engine === "stage6") || {};
+      const therapyRoleOptions = extractContextOptions(stage6Capability, "therapy_role");
+      const inducerStatusOptions = extractContextOptions(stage6Capability, "inducer_status");
       const productOptions = productOptionsFromContexts(contexts);
       const dosageForms = explicitFormOptions.length ? explicitFormOptions : uniqueDoseOptions(contexts.map(context => context.dosage_form || context.formulation || context.product_name).filter(Boolean).map(value => ({
         value: typeof value === "object" ? (value.id || value.value || value.label || String(value)) : String(value),
@@ -1216,6 +1230,8 @@
       const selectableForms = productOptions.length > 1 ? productOptions : dosageForms;
       configureDoseSelect("doseIndicationInput", indications);
       configureDoseSelect("doseRouteInput", routes);
+      configureDoseSelect("doseTherapyRoleInput", therapyRoleOptions);
+      configureDoseSelect("doseInducerStatusInput", inducerStatusOptions);
       const showIndication = indications.length > 1;
       const showRoute = routes.length > 1;
       const explicitRequired = Array.isArray(capabilityData.required_context) ? capabilityData.required_context : (Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : []);
@@ -1240,7 +1256,9 @@
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
       document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(selectableForms.length > 1 || optionalProductSelection || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
-      document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden;
+      document.getElementById("doseTherapyRoleField").hidden = therapyRoleOptions.length === 0;
+      document.getElementById("doseInducerStatusField").hidden = inducerStatusOptions.length === 0;
+      document.getElementById("doseContextFields").hidden = !showIndication && !showRoute && document.getElementById("doseDosageFormField").hidden && document.getElementById("doseTherapyRoleField").hidden && document.getElementById("doseInducerStatusField").hidden;
     }
 
     function extractContextOptions(source, contextName) {
@@ -1272,6 +1290,8 @@
       const indicationOptions = extractContextOptions(source, "indication");
       const routeOptions = extractContextOptions(source, "route");
       const dosageOptions = extractContextOptions(source, "dosage_form");
+      const therapyRoleOptions = extractContextOptions(source, "therapy_role");
+      const inducerStatusOptions = extractContextOptions(source, "inducer_status");
       if (indicationOptions.length) configureDoseSelect("doseIndicationInput", indicationOptions);
       if (routeOptions.length) configureDoseSelect("doseRouteInput", routeOptions.map(option => ({
         value: option.value,
@@ -1284,10 +1304,20 @@
         document.getElementById("doseDosageFormField").hidden = false;
         document.getElementById("doseContextFields").hidden = false;
       }
+      if (therapyRoleOptions.length && requiredContexts.includes("therapy_role")) {
+        configureDoseSelect("doseTherapyRoleInput", therapyRoleOptions);
+        document.getElementById("doseTherapyRoleField").hidden = false;
+        document.getElementById("doseContextFields").hidden = false;
+      }
+      if (inducerStatusOptions.length && requiredContexts.includes("inducer_status")) {
+        configureDoseSelect("doseInducerStatusInput", inducerStatusOptions);
+        document.getElementById("doseInducerStatusField").hidden = false;
+        document.getElementById("doseContextFields").hidden = false;
+      }
       if (requiredContexts.some(name => ["indication", "route"].includes(name))) {
         document.getElementById("doseContextFields").hidden = false;
       }
-      return indicationOptions.length + routeOptions.length + dosageOptions.length;
+      return indicationOptions.length + routeOptions.length + dosageOptions.length + therapyRoleOptions.length + inducerStatusOptions.length;
     }
 
     function uniqueDoseOptions(options) {
@@ -1366,6 +1396,8 @@
         dosage_form: document.getElementById("doseDosageFormInput").value,
         formulation: document.getElementById("doseDosageFormInput").value,
         product: document.getElementById("doseDosageFormInput").value
+        ,therapy_role: document.getElementById("doseTherapyRoleInput").value
+        ,inducer_status: document.getElementById("doseInducerStatusInput").value
       };
       const missingContext = doseRequiredContexts.find(name => !contextValues[name]);
       if (missingContext) {
@@ -1395,6 +1427,8 @@
       if (selectedOptionMeta && selectedOptionMeta.product_id) payload.product_id = selectedOptionMeta.product_id;
       if (doseRequiredContexts.includes("formulation") && contextValues.formulation) payload.formulation = contextValues.formulation;
       if (doseRequiredContexts.includes("product") && contextValues.product) payload.product = contextValues.product;
+      if (contextValues.therapy_role) payload.therapy_role = contextValues.therapy_role;
+      if (contextValues.inducer_status) payload.inducer_status = contextValues.inducer_status;
       status.textContent = "小児用量を確認中...";
       lastDoseEvaluationPayload = {...payload};
       let responseData = null;
@@ -1452,7 +1486,7 @@
     function renderUnifiedDoseResult(envelope) {
       const status = document.getElementById("doseStatus");
       const results = document.getElementById("doseResults");
-      if (["dosage_form_required", "formulation_required", "product_required", "route_required", "indication_required"].includes(envelope.status)) {
+      if (["dosage_form_required", "formulation_required", "product_required", "route_required", "indication_required", "therapy_role_required", "inducer_status_required"].includes(envelope.status)) {
         // Required context options may be returned at the envelope level or
         // nested in details/result depending on API version.
         const source = envelope.context_options ? envelope : (envelope.details || envelope.result || envelope);
@@ -1484,6 +1518,8 @@
         product_required: "doseDosageFormInput",
         route_required: "doseRouteInput",
         indication_required: "doseIndicationInput"
+        ,therapy_role_required: "doseTherapyRoleInput"
+        ,inducer_status_required: "doseInducerStatusInput"
       };
       return document.getElementById(selectIds[status] || "");
     }
@@ -2548,6 +2584,8 @@
       document.getElementById("doseContextFields").hidden = true;
       document.getElementById("doseIndicationField").hidden = true;
       document.getElementById("doseRouteField").hidden = true;
+      document.getElementById("doseTherapyRoleField").hidden = true;
+      document.getElementById("doseInducerStatusField").hidden = true;
       document.getElementById("doseBsaFields").hidden = true;
       document.getElementById("doseWeightFields").hidden = false;
     });
@@ -2630,6 +2668,16 @@
     });
 
     document.getElementById("doseDosageFormInput").addEventListener("change", async event => {
+      if (!event.target.value) return;
+      await reevaluateResolvedDoseFromCurrentInputs();
+    });
+
+    document.getElementById("doseTherapyRoleInput").addEventListener("change", async event => {
+      if (!event.target.value) return;
+      await reevaluateResolvedDoseFromCurrentInputs();
+    });
+
+    document.getElementById("doseInducerStatusInput").addEventListener("change", async event => {
       if (!event.target.value) return;
       await reevaluateResolvedDoseFromCurrentInputs();
     });

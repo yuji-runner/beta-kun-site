@@ -110,6 +110,16 @@ class PediatricDoseUiContractTests(unittest.TestCase):
         self.assertIn("showProductsForSelectedRoute(routes[0], false)", HTML)
         self.assertIn("doseRequiredContexts.filter", HTML)
 
+    def test_common_therapy_and_inducer_selectors(self):
+        self.assertIn('id="doseTherapyRoleInput"', HTML)
+        self.assertIn('id="doseInducerStatusInput"', HTML)
+        self.assertIn('extractContextOptions(stage6Capability, "therapy_role")', HTML)
+        self.assertIn('extractContextOptions(stage6Capability, "inducer_status")', HTML)
+        self.assertIn("payload.therapy_role = contextValues.therapy_role", HTML)
+        self.assertIn("payload.inducer_status = contextValues.inducer_status", HTML)
+        self.assertIn("薬剤名から自動判定しません", HTML)
+        self.assertNotIn('ingredientName === "ペランパネル水和物"', HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
