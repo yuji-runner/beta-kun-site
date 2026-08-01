@@ -28,6 +28,7 @@ TARGETS = {
             "beta_router/codex_prepare.py",
             "beta_router/task_metrics.py",
             "beta_router/task_metrics_tests.py",
+            "beta_router/project_tools_tests.py",
             "beta_router/providers/__init__.py",
             "beta_router/providers/base.py",
             "beta_router/providers/groq.py",

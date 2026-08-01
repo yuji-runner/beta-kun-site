@@ -1,427 +1,222 @@
 #!/usr/bin/env python3
-"""Codex向けのGit差分確認ツール。"""
+"""Bounded and classified Git diff inspection for Codex."""
+from __future__ import annotations
 
 import argparse
 import subprocess
 from pathlib import Path
 
-
 DEFAULT_REPO = Path.home() / "python-study" / "my-dashboard"
-
-SECRET_NAMES = {
-    ".env",
-    "token.json",
-    "credentials.json",
-    "client_secret.json",
-}
-
-EXCLUDED_NAMES = {
-    "project_context.json",
-    "codex_prompt.txt",
-    "nano",
-}
-
-EXCLUDED_SUFFIXES = {
-    ".pyc",
-    ".pid",
-}
-
-EXCLUDED_PARTS = {
-    ".git",
-    "__pycache__",
-    "node_modules",
-    "venv",
-    ".venv",
-}
+DEFAULT_MAX_FILES = 50
+DEFAULT_MAX_LINES = 500
+MAX_CONTENT_SIZE = 500_000
+SECRET_WORDS = (".env", "token", "secret", "credential", "private", "api_key", "api-key", "apikey", "id_rsa", "id_ed25519", ".key", ".pem")
+EXCLUDED_PARTS = {".git", "__pycache__", "node_modules", "venv", ".venv"}
 
 
-def run_git(
-    repo: Path,
-    *args: str,
-) -> tuple[int, str, str]:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+def run_git(repo: Path, *args: str) -> tuple[int, str, str]:
+    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=30)
+    return result.returncode, result.stdout.rstrip(), result.stderr.rstrip()
 
-    return (
-        result.returncode,
-        result.stdout.strip(),
-        result.stderr.strip(),
-    )
+
+def bounded_git_lines(repo: Path, args: list[str], limit: int) -> tuple[list[str], bool]:
+    """Stream at most limit lines so a huge diff is never fully buffered."""
+    process = subprocess.Popen(["git", *args], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lines = []
+    assert process.stdout is not None
+    truncated = False
+    try:
+        for line in process.stdout:
+            if len(lines) >= limit:
+                process.terminate()
+                truncated = True
+                break
+            lines.append(line.rstrip("\n"))
+    finally:
+        if process.poll() is None:
+            process.wait(timeout=5)
+    error = process.stderr.read().strip() if process.stderr else ""
+    process.stdout.close()
+    if process.stderr:
+        process.stderr.close()
+    if truncated:
+        return lines, True
+    if process.returncode not in (0, -15):
+        raise RuntimeError(error or "git diff failed")
+    return lines, False
+
+
+def resolve_paths(repo: Path, paths: list[str] | None, *, require_exists: bool = True) -> list[str]:
+    root = repo.resolve()
+    result = []
+    for raw in paths or []:
+        candidate = (root / raw).resolve()
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"repo外のpathは指定できません: {raw}") from exc
+        if require_exists and not candidate.exists():
+            raise ValueError(f"pathが見つかりません: {raw}")
+        result.append(str(relative))
+    return result
 
 
 def is_safe_relative_path(relative: str) -> bool:
     path = Path(relative)
-
-    if path.name in SECRET_NAMES:
-        return False
-
-    if path.name in EXCLUDED_NAMES:
-        return False
-
-    if path.suffix.lower() in EXCLUDED_SUFFIXES:
-        return False
-
-    if (
-        ".bak" in path.name
-        or path.name.endswith("~")
-        or path.name.startswith(".#")
-    ):
-        return False
-
-    if any(part in EXCLUDED_PARTS for part in path.parts):
-        return False
-
-    return True
+    return not any(part in EXCLUDED_PARTS for part in path.parts) and not path.name.endswith((".pyc", ".pid", ".bak", "~"))
 
 
-def matches_query(
-    relative: str,
-    query: str | None,
-) -> bool:
-    if not query:
-        return True
-
-    return query.lower() in relative.lower()
+def is_secret_path(relative: str) -> bool:
+    lowered = relative.lower()
+    return any(word in lowered for word in SECRET_WORDS)
 
 
-def parse_name_status(output: str) -> list[dict[str, str]]:
-    result = []
+def _path_selected(relative: str, paths: list[str]) -> bool:
+    return not paths or any(relative == item or relative.startswith(item.rstrip("/") + "/") for item in paths)
 
+
+def _name_status(repo: Path, cached: bool, paths: list[str]) -> list[dict]:
+    args = ["diff", "--name-status"] + (["--cached"] if cached else [])
+    if paths:
+        args.extend(["--", *paths])
+    code, output, error = run_git(repo, *args)
+    if code:
+        raise RuntimeError(error or "git diff failed")
+    items = []
     for line in output.splitlines():
-        if not line.strip():
-            continue
-
         parts = line.split("\t")
-
-        if len(parts) < 2:
-            continue
-
-        status = parts[0]
-        relative = parts[-1]
-
-        if not is_safe_relative_path(relative):
-            continue
-
-        result.append({
-            "status": status,
-            "path": relative,
-        })
-
-    return result
+        if len(parts) >= 2 and is_safe_relative_path(parts[-1]):
+            items.append({"status": parts[0], "path": parts[-1]})
+    return items
 
 
-def collect_untracked(repo: Path) -> list[str]:
-    code, stdout, _ = run_git(
-        repo,
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-    )
-
-    if code != 0:
+def _list_files(repo: Path, ignored: bool, paths: list[str]) -> list[str]:
+    args = ["ls-files", "--others", "--exclude-standard"]
+    if ignored:
+        args = ["ls-files", "--others", "--ignored", "--exclude-standard"]
+    if paths:
+        args.extend(["--", *paths])
+    code, output, _ = run_git(repo, *args)
+    if code:
         return []
-
-    return [
-        line
-        for line in stdout.splitlines()
-        if (
-            line.strip()
-            and is_safe_relative_path(line.strip())
-        )
-    ]
+    return [item for item in output.splitlines() if is_safe_relative_path(item) and _path_selected(item, paths)]
 
 
-def collect_numstat(
-    repo: Path,
-    *,
-    cached: bool,
-) -> dict[str, dict[str, int | str]]:
-    args = ["diff", "--numstat"]
-
-    if cached:
-        args.append("--cached")
-
-    code, stdout, _ = run_git(repo, *args)
-
-    if code != 0:
-        return {}
-
-    result: dict[str, dict[str, int | str]] = {}
-
-    for line in stdout.splitlines():
-        parts = line.split("\t")
-
-        if len(parts) < 3:
-            continue
-
-        added_raw, deleted_raw, relative = parts[0], parts[1], parts[-1]
-
-        if not is_safe_relative_path(relative):
-            continue
-
-        added: int | str = (
-            int(added_raw)
-            if added_raw.isdigit()
-            else added_raw
-        )
-        deleted: int | str = (
-            int(deleted_raw)
-            if deleted_raw.isdigit()
-            else deleted_raw
-        )
-
-        result[relative] = {
-            "added": added,
-            "deleted": deleted,
-        }
-
+def _file_preview(repo: Path, relative: str, max_lines: int) -> dict:
+    path = repo / relative
+    result = {"path": relative, "content": [], "reason": None, "truncated": False}
+    if is_secret_path(relative):
+        result["reason"] = "secret-like path; content hidden"; return result
+    try:
+        size = path.stat().st_size
+        if size > MAX_CONTENT_SIZE:
+            result["reason"] = f"large file ({size} bytes); summary only"; return result
+        raw = path.read_bytes()
+    except OSError as exc:
+        result["reason"] = f"unreadable: {exc}"; return result
+    if b"\0" in raw:
+        result["reason"] = "binary file; content hidden"; return result
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    result["content"] = [f"+{line}" for line in lines[:max_lines]]
+    result["truncated"] = len(lines) > max_lines
     return result
 
 
-def collect_diff(
-    repo: Path,
-    *,
-    query: str | None = None,
-    max_lines: int = 160,
-) -> dict:
-    _, branch, _ = run_git(
-        repo,
-        "branch",
-        "--show-current",
-    )
-
-    _, latest_commit, _ = run_git(
-        repo,
-        "log",
-        "-1",
-        "--pretty=format:%h %ad %s",
-        "--date=iso",
-    )
-
-    _, unstaged_raw, _ = run_git(
-        repo,
-        "diff",
-        "--name-status",
-    )
-
-    _, staged_raw, _ = run_git(
-        repo,
-        "diff",
-        "--cached",
-        "--name-status",
-    )
-
-    unstaged = [
-        item
-        for item in parse_name_status(unstaged_raw)
-        if matches_query(item["path"], query)
-    ]
-
-    staged = [
-        item
-        for item in parse_name_status(staged_raw)
-        if matches_query(item["path"], query)
-    ]
-
-    untracked = [
-        relative
-        for relative in collect_untracked(repo)
-        if matches_query(relative, query)
-    ]
-
-    unstaged_numstat = collect_numstat(
-        repo,
-        cached=False,
-    )
-    staged_numstat = collect_numstat(
-        repo,
-        cached=True,
-    )
-
-    diff_paths = [
-        item["path"]
-        for item in [*staged, *unstaged]
-    ]
-
-    diff_args = ["diff", "--no-ext-diff", "--unified=2"]
-
-    if query:
-        if diff_paths:
-            diff_args.extend(
-                ["--", *dict.fromkeys(diff_paths)]
-            )
-            _, diff_text, _ = run_git(repo, *diff_args)
-        else:
-            # 絞り込み対象が0件なら、全リポジトリの差分を
-            # 誤って表示しない。
-            diff_text = ""
-    else:
-        _, diff_text, _ = run_git(repo, *diff_args)
-
-    diff_lines = diff_text.splitlines()
-    diff_truncated = len(diff_lines) > max_lines
-
-    return {
-        "repository": str(repo),
-        "branch": branch or "(detached)",
-        "latest_commit": latest_commit or "取得できません",
-        "query": query,
-        "staged": staged,
-        "unstaged": unstaged,
-        "untracked": untracked,
-        "staged_numstat": staged_numstat,
-        "unstaged_numstat": unstaged_numstat,
-        "diff_preview": diff_lines[:max_lines],
-        "diff_truncated": diff_truncated,
-        "diff_total_lines": len(diff_lines),
-    }
-
-
-def print_file_group(
-    title: str,
-    items: list[dict[str, str]],
-    numstat: dict[str, dict[str, int | str]],
-) -> None:
-    print(title)
-
-    if not items:
-        print("  なし")
-        return
-
+def _submodules(repo: Path, items: list[dict]) -> list[dict]:
+    result = []
     for item in items:
-        relative = item["path"]
-        stats = numstat.get(relative, {})
+        code, entry, _ = run_git(repo, "ls-files", "-s", "--", item["path"])
+        if code or not entry.startswith("160000 "):
+            continue
+        _, text, _ = run_git(repo, "diff", "--submodule=short", "--", item["path"])
+        old = new = None
+        for line in text.splitlines():
+            if line.startswith("-Subproject commit "): old = line.rsplit(" ", 1)[-1].rstrip("-dirty")
+            if line.startswith("+Subproject commit "): new = line.rsplit(" ", 1)[-1].rstrip("-dirty")
+        result.append({"path": item["path"], "old_sha": old, "new_sha": new, "command": f"python3 {item['path']}/beta_router/codex_tools.py --repo {repo / item['path']} diff"})
+    return result
 
-        added = stats.get("added", "-")
-        deleted = stats.get("deleted", "-")
 
-        print(
-            f"  {item['status']:<3} "
-            f"{relative} "
-            f"(+{added} / -{deleted})"
-        )
+def collect_diff(repo: Path, *, query: str | None = None, paths: list[str] | None = None, staged: bool = False, unstaged: bool = False, untracked: bool = False, include_ignored: bool = False, summary_only: bool = False, max_files: int = DEFAULT_MAX_FILES, max_lines: int = DEFAULT_MAX_LINES) -> dict:
+    repo = repo.expanduser().resolve()
+    selected_paths = resolve_paths(repo, paths)
+    explicit_modes = staged or unstaged or untracked
+    show_staged, show_unstaged = (staged, unstaged) if explicit_modes else (True, True)
+    staged_items = _name_status(repo, True, selected_paths) if show_staged else []
+    unstaged_items = _name_status(repo, False, selected_paths) if show_unstaged else []
+    show_untracked = untracked or not explicit_modes
+    untracked_files = _list_files(repo, False, selected_paths) if show_untracked else []
+    if query:
+        accept = lambda value: query.lower() in value.lower()
+        staged_items = [x for x in staged_items if accept(x["path"])]
+        unstaged_items = [x for x in unstaged_items if accept(x["path"])]
+        untracked_files = [x for x in untracked_files if accept(x)]
+    ignored_files = _list_files(repo, True, selected_paths) if include_ignored and selected_paths else []
+    total_counts = {"staged": len(staged_items), "unstaged": len(unstaged_items), "untracked": len(untracked_files), "ignored": len(ignored_files)}
+    all_files = [x["path"] for x in staged_items + unstaged_items] + untracked_files + ignored_files
+    truncated_files = len(dict.fromkeys(all_files)) > max_files
+    permitted = set(list(dict.fromkeys(all_files))[:max_files])
+    staged_items = [x for x in staged_items if x["path"] in permitted]
+    unstaged_items = [x for x in unstaged_items if x["path"] in permitted]
+    untracked_files = [x for x in untracked_files if x in permitted]
+    ignored_files = [x for x in ignored_files if x in permitted]
+    previews = {"staged": [], "unstaged": [], "untracked": [], "ignored": []}
+    lines_left = max_lines
+    truncated_lines = False
+    if not summary_only:
+        for key, cached, items in (("staged", True, staged_items), ("unstaged", False, unstaged_items)):
+            if not items or lines_left <= 0: continue
+            args = ["diff", "--no-ext-diff", "--unified=2"] + (["--cached"] if cached else []) + ["--", *[x["path"] for x in items]]
+            lines, cut = bounded_git_lines(repo, args, lines_left)
+            previews[key] = lines; lines_left -= len(lines); truncated_lines = truncated_lines or cut
+        if untracked:
+            for relative in untracked_files:
+                if lines_left <= 0: break
+                preview = _file_preview(repo, relative, lines_left); previews["untracked"].append(preview); lines_left -= len(preview["content"])
+        for relative in ignored_files:
+            if lines_left <= 0: break
+            preview = _file_preview(repo, relative, lines_left); previews["ignored"].append(preview); lines_left -= len(preview["content"])
+    _, branch, _ = run_git(repo, "branch", "--show-current")
+    _, latest, _ = run_git(repo, "log", "-1", "--oneline")
+    return {"repository": str(repo), "branch": branch or "(detached)", "latest_commit": latest, "query": query, "paths": selected_paths, "staged": staged_items, "unstaged": unstaged_items, "untracked": untracked_files, "ignored": ignored_files, "previews": previews, "counts": total_counts, "displayed_counts": {"staged": len(staged_items), "unstaged": len(unstaged_items), "untracked": len(untracked_files), "ignored": len(ignored_files)}, "truncated": truncated_files or truncated_lines or lines_left <= 0, "max_files": max_files, "max_lines": max_lines, "submodules": _submodules(repo, staged_items + unstaged_items)}
 
 
 def print_diff(context: dict) -> None:
-    print("=" * 72)
-    print("PROJECT DIFF")
-    print("=" * 72)
-    print(f"リポジトリ   : {context['repository']}")
-    print(f"ブランチ     : {context['branch']}")
-    print(f"最新コミット : {context['latest_commit']}")
-
-    if context["query"]:
-        print(f"絞り込み     : {context['query']}")
-
-    print("-" * 72)
-
-    print_file_group(
-        "ステージ済み",
-        context["staged"],
-        context["staged_numstat"],
-    )
-
-    print("-" * 72)
-
-    print_file_group(
-        "未ステージ",
-        context["unstaged"],
-        context["unstaged_numstat"],
-    )
-
-    print("-" * 72)
-    print("未追跡")
-
-    if context["untracked"]:
-        for relative in context["untracked"][:50]:
-            print(f"  ??  {relative}")
-
-        omitted = len(context["untracked"]) - 50
-
-        if omitted > 0:
-            print(f"  ... ほか {omitted}件")
-    else:
-        print("  なし")
-
-    print("-" * 72)
-    print("差分プレビュー")
-
-    if context["diff_preview"]:
-        for line in context["diff_preview"]:
-            print(line)
-    else:
-        print("  差分なし")
-
-    if context["diff_truncated"]:
-        print()
-        print(
-            f"... 差分全{context['diff_total_lines']}行のうち、"
-            f"{len(context['diff_preview'])}行を表示"
-        )
-
-    print("=" * 72)
+    print("=" * 72); print("PROJECT DIFF"); print("=" * 72)
+    print(f"repository: {context['repository']}"); print(f"branch: {context['branch']}"); print(f"latest_commit: {context['latest_commit']}"); print(f"paths: {context['paths'] or ['.']}")
+    for key, title in (("staged", "staged"), ("unstaged", "unstaged"), ("untracked", "untracked"), ("ignored", "ignored relevant files")):
+        print("-" * 72); print(f"{title} ({context['counts'][key]})")
+        items = context[key]
+        for item in items:
+            print(f"  {item.get('status', '??') if isinstance(item, dict) else '??'}  {item['path'] if isinstance(item, dict) else item}")
+        if not items: print("  none")
+        preview = context["previews"][key]
+        if preview and isinstance(preview[0], str):
+            print(*preview, sep="\n")
+        else:
+            for entry in preview:
+                print(f"--- /dev/null\n+++ {entry['path']}")
+                if entry["reason"]: print(f"[summary only] {entry['reason']}")
+                else: print(*entry["content"], sep="\n")
+                if entry["truncated"]: print("[content truncated]")
+    for submodule in context["submodules"]:
+        print(f"submodule: {submodule['path']} old={submodule['old_sha']} new={submodule['new_sha']}"); print(f"  internal diff: {submodule['command']}")
+    print(f"truncated: {str(context['truncated']).lower()}")
+    if context["truncated"]: print("続き: --path <対象> --max-files <件数> --max-lines <行数> で限定してください")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Git差分をCodex向けに整理して表示します。"
-    )
-
-    parser.add_argument(
-        "--repo",
-        type=Path,
-        default=DEFAULT_REPO,
-        help="対象Gitリポジトリ",
-    )
-
-    parser.add_argument(
-        "--query",
-        help="ファイルパスの絞り込み語",
-    )
-
-    parser.add_argument(
-        "--max-lines",
-        type=int,
-        default=160,
-        help="差分プレビューの最大行数",
-    )
-
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="Git差分を安全に分類表示します。")
+    p.add_argument("--repo", type=Path, default=DEFAULT_REPO); p.add_argument("--query")
+    p.add_argument("--path", action="append", dest="paths"); p.add_argument("--staged", action="store_true"); p.add_argument("--unstaged", action="store_true"); p.add_argument("--untracked", action="store_true")
+    p.add_argument("--include-ignored", action="store_true"); p.add_argument("--summary-only", action="store_true"); p.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES); p.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES)
+    return p.parse_args()
 
 
 def main() -> None:
-    args = parse_args()
-    repo = args.repo.expanduser().resolve()
-
-    if not repo.is_dir():
-        raise SystemExit(
-            f"リポジトリが見つかりません: {repo}"
-        )
-
-    code, _, stderr = run_git(
-        repo,
-        "rev-parse",
-        "--show-toplevel",
-    )
-
-    if code != 0:
-        raise SystemExit(
-            f"Gitリポジトリではありません: {stderr or repo}"
-        )
-
-    context = collect_diff(
-        repo,
-        query=args.query,
-        max_lines=max(20, args.max_lines),
-    )
-
-    print_diff(context)
+    a = parse_args()
+    try: print_diff(collect_diff(a.repo, query=a.query, paths=a.paths, staged=a.staged, unstaged=a.unstaged, untracked=a.untracked, include_ignored=a.include_ignored, summary_only=a.summary_only, max_files=max(1, a.max_files), max_lines=max(1, a.max_lines)))
+    except (ValueError, RuntimeError) as exc: raise SystemExit(f"エラー: {exc}")
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

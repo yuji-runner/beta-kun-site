@@ -57,6 +57,48 @@ def _write_record(record: dict[str, Any]) -> None:
         return
 
 
+def read_task_records(task_id: str) -> list[dict[str, Any]]:
+    """Best-effort read of records for one task without changing JSONL."""
+    try:
+        records = []
+        for line in METRICS_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if record.get("task_id") == task_id:
+                records.append(record)
+        return records
+    except OSError:
+        return []
+
+
+def summarize_task(task_id: str) -> dict[str, Any]:
+    records = read_task_records(task_id)
+    subcommands = [item.get("subcommand") for item in records]
+    starts = [item.get("timestamp_start") for item in records if item.get("timestamp_start")]
+    first = min(starts) if starts else None
+    try:
+        total_elapsed = (datetime.now().astimezone() - datetime.fromisoformat(first)).total_seconds() if first else 0.0
+    except (TypeError, ValueError):
+        total_elapsed = 0.0
+    return {
+        "task_total_elapsed_sec": round(total_elapsed, 3),
+        "command_count": len(records) + 1,
+        "accumulated_command_time_sec": round(sum(float(item.get("command_elapsed_sec") or 0) for item in records), 3),
+        "provider_wait_sec": round(sum(float(item.get("provider_wait_sec") or 0) for item in records), 3),
+        "logical_provider_calls": sum(int(item.get("logical_provider_calls") or 0) for item in records),
+        "http_attempts": sum(int(item.get("http_attempts") or 0) for item in records),
+        "retry_count": sum(int(item.get("retry_count") or 0) for item in records),
+        "fallback_count": sum(int(item.get("fallback_count") or 0) for item in records),
+        "search_count": subcommands.count("search"),
+        "diff_count": subcommands.count("diff"),
+        "test_count": subcommands.count("test"),
+        "duplicate_finish": "finish" in subcommands,
+        "timestamp_first": first,
+    }
+
+
 class TaskMetrics:
     """Collect one command's timing and provider counters."""
 
@@ -97,6 +139,7 @@ class TaskMetrics:
         self.test_status: str | None = None
         self._token = None
         self._finished = False
+        self.extra_fields: dict[str, Any] = {}
 
     def __enter__(self) -> "TaskMetrics":
         self._token = _current_session.set(self)
@@ -166,6 +209,7 @@ class TaskMetrics:
             "error_type": type(error).__name__ if isinstance(error, BaseException) else None,
             "error_message": safe_error_message(error),
         }
+        record.update(self.extra_fields)
         _write_record(record)
 
     def close(

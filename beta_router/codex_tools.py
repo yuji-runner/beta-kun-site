@@ -4,11 +4,18 @@
 import argparse
 from pathlib import Path
 
-from project_context import build_context, print_text
-from project_diff import collect_diff, print_diff
-from project_search import search_project
-from task_metrics import TaskMetrics
-from test_runner import TARGETS, run_target
+if __package__:
+    from .project_context import build_context, print_text
+    from .project_diff import DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, collect_diff, print_diff
+    from .project_search import DEFAULT_MAX_RESULTS, print_search, search_project_report
+    from .task_metrics import TaskMetrics, summarize_task
+    from .test_runner import TARGETS, run_target
+else:
+    from project_context import build_context, print_text
+    from project_diff import DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, collect_diff, print_diff
+    from project_search import DEFAULT_MAX_RESULTS, print_search, search_project_report
+    from task_metrics import TaskMetrics, summarize_task
+    from test_runner import TARGETS, run_target
 
 
 DEFAULT_REPO = Path.home() / "python-study" / "my-dashboard"
@@ -24,11 +31,13 @@ def run_diff(
     repo: Path,
     query: str | None,
     max_lines: int,
+    **options,
 ) -> int:
     context = collect_diff(
         repo,
         query=query,
         max_lines=max_lines,
+        **options,
     )
 
     print_diff(context)
@@ -39,44 +48,21 @@ def run_search(
     repo: Path,
     query: str,
     limit: int,
+    **options,
 ) -> int:
-    results = search_project(
-        repo,
-        query,
-        limit=limit,
-    )
+    report = search_project_report(repo, query, max_results=limit, **options)
+    print_search(report)
+    return 0 if report["results"] else 1
 
-    print("=" * 64)
-    print(f"PROJECT SEARCH: {query}")
-    print(f"対象: {repo}")
-    print("=" * 64)
 
-    if not results:
-        print("該当ファイルは見つかりませんでした。")
-        return 1
-
-    for result in results:
-        print()
-        print(
-            f"{result['path']} "
-            f"[score={result['score']}]"
-        )
-
-        if not result["matches"]:
-            print("  ファイル名が一致")
-            continue
-
-        for match in result["matches"]:
-            print(
-                f"  L{match['line']}: "
-                f"{match['text']}"
-            )
-
-    print()
-    print("=" * 64)
-    print(f"表示件数: {len(results)}")
-
-    return 0
+def run_finish(task_id: str) -> dict:
+    summary = summarize_task(task_id)
+    print("=" * 64); print("TASK FINISH"); print("=" * 64)
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+    if summary["duplicate_finish"]:
+        print("warning: this task_id already has a finish record")
+    return summary
 
 
 def run_tests(
@@ -147,11 +133,18 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="ファイルパスの絞り込み語",
     )
+    diff_parser.add_argument("--path", action="append", dest="paths")
+    diff_parser.add_argument("--staged", action="store_true")
+    diff_parser.add_argument("--unstaged", action="store_true")
+    diff_parser.add_argument("--untracked", action="store_true")
+    diff_parser.add_argument("--include-ignored", action="store_true")
+    diff_parser.add_argument("--summary-only", action="store_true")
+    diff_parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES)
 
     diff_parser.add_argument(
         "--max-lines",
         type=int,
-        default=160,
+        default=DEFAULT_MAX_LINES,
         help="差分プレビューの最大行数",
     )
 
@@ -164,11 +157,18 @@ def build_parser() -> argparse.ArgumentParser:
         "query",
         help="検索語",
     )
+    search_parser.add_argument("--path", action="append", dest="paths")
+    search_parser.add_argument("--glob", action="append", dest="globs")
+    search_parser.add_argument("--ext", action="append", dest="extensions")
+    search_parser.add_argument("--exclude", action="append", dest="excludes")
+    search_parser.add_argument("--fixed-string", action="store_true")
+    search_parser.add_argument("--case-sensitive", action="store_true")
+    search_parser.add_argument("--include-hidden", action="store_true")
 
     search_parser.add_argument(
-        "--limit",
+        "--max-results", "--limit",
         type=int,
-        default=30,
+        default=DEFAULT_MAX_RESULTS,
         help="最大表示件数",
     )
 
@@ -182,6 +182,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[*TARGETS, "all"],
         help="テスト対象",
     )
+
+    subparsers.add_parser("finish", help="作業を実行せずtask終了レコードを記録")
 
     return parser
 
@@ -204,6 +206,7 @@ def main() -> None:
             "diff": getattr(args, "query", None) or "Collect project diff",
             "search": getattr(args, "query", None),
             "test": f"Run {getattr(args, 'target', '')} tests",
+            "finish": "Finish measured task",
         }.get(args.command)
 
     metrics = TaskMetrics(
@@ -227,13 +230,27 @@ def main() -> None:
                 repo,
                 args.query,
                 args.max_lines,
+                paths=args.paths,
+                staged=args.staged,
+                unstaged=args.unstaged,
+                untracked=args.untracked,
+                include_ignored=args.include_ignored,
+                summary_only=args.summary_only,
+                max_files=max(1, args.max_files),
             )
 
         elif args.command == "search":
             exit_code = run_search(
                 repo,
                 args.query,
-                args.limit,
+                args.max_results,
+                paths=args.paths,
+                globs=args.globs,
+                extensions=args.extensions,
+                excludes=args.excludes,
+                fixed_string=args.fixed_string,
+                case_sensitive=args.case_sensitive,
+                include_hidden=args.include_hidden,
             )
 
         elif args.command == "test":
@@ -241,6 +258,11 @@ def main() -> None:
                 repo,
                 args.target,
             )
+
+        elif args.command == "finish":
+            summary = run_finish(metrics.task_id)
+            metrics.extra_fields.update(summary)
+            exit_code = 0
 
         else:
             parser.error(
