@@ -1,6 +1,7 @@
 """NVIDIA NIM Provider。"""
 
 import time
+from pathlib import Path
 
 import requests
 
@@ -13,6 +14,7 @@ try:
         NVIDIA_MODEL,
         SYSTEM_PROMPT,
     )
+    from ..task_metrics import TaskMetrics, current_metrics
 except ImportError:
     # beta_routerディレクトリ内から直接実行する場合
     from providers.base import BaseProvider
@@ -22,6 +24,7 @@ except ImportError:
         NVIDIA_MODEL,
         SYSTEM_PROMPT,
     )
+    from task_metrics import TaskMetrics, current_metrics
 
 
 class NvidiaProvider(BaseProvider):
@@ -38,6 +41,34 @@ class NvidiaProvider(BaseProvider):
         self.model = model
 
     def chat(self, prompt: str) -> str:
+        metrics = current_metrics()
+        owns_metrics = metrics is None
+        if metrics is None:
+            metrics = TaskMetrics(
+                repo=Path(__file__).resolve().parents[2],
+                command="provider",
+                subcommand="chat",
+                task_description="Direct provider call",
+                provider=self.name,
+                provider_purpose="direct",
+            )
+            metrics.__enter__()
+
+        if owns_metrics:
+            metrics.provider_call(self.name, "direct")
+        metrics.prompt_length = len(prompt)
+
+        try:
+            answer = self._chat(prompt, metrics)
+        except Exception as exc:
+            if owns_metrics:
+                metrics.close("error", error=exc)
+            raise
+        if owns_metrics:
+            metrics.close("success")
+        return answer
+
+    def _chat(self, prompt: str, metrics: TaskMetrics) -> str:
         if not self.api_key:
             raise RuntimeError(
                 "NVIDIA_API_KEYが設定されていません。"
@@ -57,29 +88,45 @@ class NvidiaProvider(BaseProvider):
         response = None
 
         for attempt in range(1, max_attempts + 1):
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": SYSTEM_PROMPT,
-                        },
-                        {
-                            "role": "user",
-                            "content": prompt,
-                        },
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 1600,
-                    "stream": False,
-                },
-                timeout=(5, 120),
+            try:
+                response = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": SYSTEM_PROMPT,
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            },
+                        ],
+                        "temperature": 0.2,
+                        "max_tokens": 1600,
+                        "stream": False,
+                    },
+                    timeout=(5, 120),
+                )
+            except requests.RequestException:
+                metrics.http_attempt(status="request_error")
+                raise
+
+            retry = (
+                not response.ok
+                and response.status_code in retry_statuses
+                and attempt < max_attempts
+            )
+            wait_seconds = 2 ** (attempt - 1) if retry else 0
+            metrics.http_attempt(
+                status=response.status_code,
+                retry=retry,
+                wait_sec=wait_seconds,
             )
 
             if response.ok:
@@ -98,8 +145,6 @@ class NvidiaProvider(BaseProvider):
                     f"attempt={attempt}/{max_attempts} "
                     f"response={response_text[:1000] or '(空のレスポンス)'}"
                 )
-
-            wait_seconds = 2 ** (attempt - 1)
 
             print(
                 "⚠ NVIDIA NIM一時エラー: "

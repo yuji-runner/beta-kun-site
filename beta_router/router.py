@@ -1,18 +1,21 @@
 import argparse
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 
 try:
     # beta_routerパッケージとしてimportする場合
     from .logger import write_log
+    from .task_metrics import TaskMetrics, current_metrics
     from .providers.groq import GroqProvider
     from .providers.nvidia import NvidiaProvider
     from .providers.ollama import OllamaProvider
 except ImportError:
     # router.pyを直接CLI実行する場合
     from logger import write_log
+    from task_metrics import TaskMetrics, current_metrics
     from providers.groq import GroqProvider
     from providers.nvidia import NvidiaProvider
     from providers.ollama import OllamaProvider
@@ -165,6 +168,17 @@ class BetaRouter:
         requested_provider = provider
         provider_used = ""
         fallback = False
+        metrics = current_metrics()
+        owns_metrics = metrics is None
+        if metrics is None:
+            metrics = TaskMetrics(
+                repo=Path(__file__).resolve().parents[2],
+                command="router.py",
+                subcommand="ask",
+                task_description="BetaRouter provider request",
+                provider_purpose="routing",
+            )
+            metrics.__enter__()
 
         try:
             if provider == "auto":
@@ -177,6 +191,7 @@ class BetaRouter:
                 task_type = decision.task_type
                 route_reason = decision.reason
                 requested_provider = decision.provider
+                metrics.provider_purpose = decision.task_type
 
                 print(
                     f"→ Auto選択: "
@@ -208,7 +223,7 @@ class BetaRouter:
                     f"{provider.capitalize()}"
                 )
 
-                answer = self.providers[provider].chat(prompt)
+                answer = self._provider_chat(provider, prompt, metrics)
 
                 result = ChatResult(
                     answer=answer,
@@ -238,6 +253,9 @@ class BetaRouter:
                 }
             )
 
+            if owns_metrics:
+                metrics.close("success")
+
             return result.answer
 
         except Exception as exc:
@@ -261,7 +279,20 @@ class BetaRouter:
                 }
             )
 
+            if owns_metrics:
+                metrics.close("error", error=exc)
+
             raise
+
+    def _provider_chat(
+        self,
+        provider: str,
+        prompt: str,
+        metrics: TaskMetrics,
+    ) -> str:
+        metrics.provider_call(provider, metrics.provider_purpose)
+        metrics.prompt_length = len(prompt)
+        return self.providers[provider].chat(prompt)
 
     def _chat_with_fallback(
         self,
@@ -283,9 +314,14 @@ class BetaRouter:
             )
 
         try:
-            answer = self.providers[
-                primary_provider
-            ].chat(prompt)
+            metrics = current_metrics()
+            if metrics is None:
+                raise RuntimeError("計測セッションがありません。")
+            answer = self._provider_chat(
+                primary_provider,
+                prompt,
+                metrics,
+            )
 
             return ChatResult(
                 answer=answer,
@@ -316,9 +352,13 @@ class BetaRouter:
                 "フォールバック"
             )
 
-            answer = self.providers[
-                fallback_provider
-            ].chat(prompt)
+            metrics.fallback_count += 1
+
+            answer = self._provider_chat(
+                fallback_provider,
+                prompt,
+                metrics,
+            )
 
             return ChatResult(
                 answer=answer,

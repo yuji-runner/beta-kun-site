@@ -7,8 +7,10 @@ from pathlib import Path
 
 try:
     from .providers.nvidia import NvidiaProvider
+    from .task_metrics import TaskMetrics
 except ImportError:
     from providers.nvidia import NvidiaProvider
+    from task_metrics import TaskMetrics
 
 
 DEFAULT_REPO = Path.home() / "python-study" / "my-dashboard"
@@ -469,11 +471,24 @@ def parse_args() -> argparse.Namespace:
         help="Codex指示の保存先",
     )
 
+    parser.add_argument("--task-id", help="既存の計測task_idを引き継ぐ")
+    parser.add_argument(
+        "--additional-instructions",
+        type=int,
+        default=0,
+        help="Codexへの追加指示回数",
+    )
+    parser.add_argument(
+        "--rework-count",
+        type=int,
+        default=0,
+        help="再修正回数",
+    )
+
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
+def run_prepare(args: argparse.Namespace, metrics: TaskMetrics) -> None:
     repo = args.repo.expanduser().resolve()
     output = args.output.expanduser().resolve()
 
@@ -515,6 +530,7 @@ def main() -> None:
     )
 
     print("4/4 Codex向け指示を作成しています...")
+    metrics.provider_call("nvidia", "codex_prompt_generation")
     nvidia_result = build_codex_prompt(
         provider,
         task=args.task,
@@ -527,6 +543,7 @@ def main() -> None:
     action, codex_prompt = parse_codex_action(
         nvidia_result
     )
+    metrics.prompt_generated = True
 
     print()
     print("=" * 60)
@@ -566,6 +583,25 @@ def main() -> None:
         f'codex exec -C "{repo}" '
         f'--sandbox workspace-write - < "{output}"'
     )
+
+
+def main() -> None:
+    args = parse_args()
+    repo = args.repo.expanduser().resolve()
+    metrics = TaskMetrics(
+        repo=repo,
+        command="codex_prepare.py",
+        subcommand="prepare",
+        task_description=args.task,
+        task_id=args.task_id,
+        provider="nvidia",
+        provider_purpose="codex_prompt_generation",
+        additional_instruction_count=args.additional_instructions,
+        rework_count=args.rework_count,
+    )
+
+    with metrics:
+        run_prepare(args, metrics)
 
 
 if __name__ == "__main__":

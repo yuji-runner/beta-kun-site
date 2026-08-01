@@ -1,16 +1,21 @@
 """βRouter 公開API。"""
 
-from .router import BetaRouter, ChatResult, RouteDecision
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .router import BetaRouter
 
 
-_default_router: BetaRouter | None = None
+_default_router: Any | None = None
 
 
-def get_router() -> BetaRouter:
+def get_router() -> "BetaRouter":
     """共有のBetaRouterインスタンスを返す。"""
     global _default_router
 
     if _default_router is None:
+        from .router import BetaRouter
+
         _default_router = BetaRouter()
 
     return _default_router
@@ -34,6 +39,15 @@ def ask(
             else None
         ),
     )
+
+
+def __getattr__(name: str) -> Any:
+    """Load Provider-dependent public classes only when requested."""
+    if name in {"BetaRouter", "ChatResult", "RouteDecision"}:
+        from . import router
+
+        return getattr(router, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
