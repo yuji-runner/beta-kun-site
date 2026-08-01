@@ -1,0 +1,18 @@
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# βRouter secrets and runtime logs
+beta_router/.env
+beta_router/logs/*.jsonl
+
+# βRouter local files
+beta_router/.env
+beta_router/logs/
+beta_router/*.bak*
+beta_router/**/*.bak*
+beta_router/project_context.json
+beta_router/codex_prompt.txt
+beta_router/__pycache__/
+beta_router/providers/__pycache__/
