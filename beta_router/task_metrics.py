@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 import uuid
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,7 @@ from typing import Any
 BASE_DIR = Path(__file__).resolve().parent
 METRICS_FILE = BASE_DIR / "logs" / "task_metrics.jsonl"
 MAX_ERROR_CHARS = 300
+_warned_write_failures: set[tuple[str, str]] = set()
 
 _current_session: ContextVar["TaskMetrics | None"] = ContextVar(
     "task_metrics_session",
@@ -47,21 +50,57 @@ def safe_error_message(error: BaseException | str | None) -> str | None:
     return message[:MAX_ERROR_CHARS]
 
 
-def _write_record(record: dict[str, Any]) -> None:
-    """Append a record, never allowing telemetry failure to break work."""
-    try:
-        METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with METRICS_FILE.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except (OSError, TypeError, ValueError):
+@dataclass(frozen=True)
+class MetricsWriteResult:
+    success: bool
+    path: str
+    error_type: str | None = None
+    error_message: str | None = None
+
+
+def metrics_log_path(path: Path | str | None = None) -> Path:
+    """Return one absolute metrics path; tests may inject an isolated path."""
+    selected = METRICS_FILE if path is None else Path(path)
+    return selected.expanduser().resolve()
+
+
+def _warn_write_failure(result: MetricsWriteResult) -> None:
+    key = (result.path, result.error_type or "unknown")
+    if key in _warned_write_failures:
         return
+    _warned_write_failures.add(key)
+    print(
+        f"WARNING: task metrics record could not be written: "
+        f"path={result.path} error={result.error_type or 'unknown'} "
+        f"message={result.error_message or 'unavailable'}",
+        file=sys.stderr,
+    )
 
 
-def read_task_records(task_id: str) -> list[dict[str, Any]]:
+def _write_record(record: dict[str, Any], path: Path | str | None = None) -> MetricsWriteResult:
+    """Append a record without allowing telemetry failure to break work."""
+    target = metrics_log_path(path)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return MetricsWriteResult(True, str(target))
+    except (OSError, TypeError, ValueError) as error:
+        result = MetricsWriteResult(
+            False,
+            str(target),
+            type(error).__name__,
+            safe_error_message(error),
+        )
+        _warn_write_failure(result)
+        return result
+
+
+def read_task_records(task_id: str, path: Path | str | None = None) -> list[dict[str, Any]]:
     """Best-effort read of records for one task without changing JSONL."""
     try:
         records = []
-        for line in METRICS_FILE.read_text(encoding="utf-8").splitlines():
+        for line in metrics_log_path(path).read_text(encoding="utf-8").splitlines():
             try:
                 record = json.loads(line)
             except (TypeError, ValueError):
@@ -73,9 +112,10 @@ def read_task_records(task_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def summarize_task(task_id: str) -> dict[str, Any]:
-    records = read_task_records(task_id)
-    subcommands = [item.get("subcommand") for item in records]
+def summarize_task(task_id: str, path: Path | str | None = None) -> dict[str, Any]:
+    records = read_task_records(task_id, path)
+    successful = [item for item in records if item.get("status") == "success"]
+    subcommands = [item.get("subcommand") for item in successful]
     starts = [item.get("timestamp_start") for item in records if item.get("timestamp_start")]
     first = min(starts) if starts else None
     try:
@@ -94,8 +134,10 @@ def summarize_task(task_id: str) -> dict[str, Any]:
         "search_count": subcommands.count("search"),
         "diff_count": subcommands.count("diff"),
         "test_count": subcommands.count("test"),
+        "finish_count": subcommands.count("finish"),
         "duplicate_finish": "finish" in subcommands,
         "timestamp_first": first,
+        "metrics_log_path": str(metrics_log_path(path)),
     }
 
 
@@ -115,6 +157,7 @@ class TaskMetrics:
         test_target: str | None = None,
         additional_instruction_count: int = 0,
         rework_count: int = 0,
+        metrics_file: Path | str | None = None,
     ) -> None:
         self.task_id = task_id or uuid.uuid4().hex
         self.repo = str(Path(repo).expanduser().resolve()) if repo else None
@@ -126,6 +169,7 @@ class TaskMetrics:
         self.test_target = test_target
         self.additional_instruction_count = additional_instruction_count
         self.rework_count = rework_count
+        self.metrics_file = metrics_log_path(metrics_file)
         self.timestamp_start = now_iso()
         self._started = time.perf_counter()
         self.logical_provider_calls = 0
@@ -140,6 +184,7 @@ class TaskMetrics:
         self._token = None
         self._finished = False
         self.extra_fields: dict[str, Any] = {}
+        self.write_result: MetricsWriteResult | None = None
 
     def __enter__(self) -> "TaskMetrics":
         self._token = _current_session.set(self)
@@ -175,9 +220,9 @@ class TaskMetrics:
         status: str,
         *,
         error: BaseException | str | None = None,
-    ) -> None:
+    ) -> MetricsWriteResult:
         if self._finished:
-            return
+            return self.write_result or MetricsWriteResult(False, str(self.metrics_file), "AlreadyFinished", "record already closed")
         self._finished = True
         timestamp_end = now_iso()
         record = {
@@ -210,18 +255,20 @@ class TaskMetrics:
             "error_message": safe_error_message(error),
         }
         record.update(self.extra_fields)
-        _write_record(record)
+        self.write_result = _write_record(record, self.metrics_file)
+        return self.write_result
 
     def close(
         self,
         status: str,
         *,
         error: BaseException | str | None = None,
-    ) -> None:
-        self.finish(status, error=error)
+    ) -> MetricsWriteResult:
+        result = self.finish(status, error=error)
         if self._token is not None:
             _current_session.reset(self._token)
             self._token = None
+        return result
 
 
 def current_metrics() -> TaskMetrics | None:

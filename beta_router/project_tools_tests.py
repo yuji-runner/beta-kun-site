@@ -7,6 +7,8 @@ import os
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -80,14 +82,33 @@ class DiffTests(unittest.TestCase):
     def test_classification_and_modes(self):
         all_items = project_diff.collect_diff(self.repo)
         self.assertEqual((1, 1, 1), (all_items["counts"]["staged"], all_items["counts"]["unstaged"], all_items["counts"]["untracked"]))
-        self.assertEqual(1, project_diff.collect_diff(self.repo, staged=True)["counts"]["staged"])
-        self.assertEqual(0, project_diff.collect_diff(self.repo, staged=True)["counts"]["untracked"])
-        self.assertEqual(1, project_diff.collect_diff(self.repo, unstaged=True)["counts"]["unstaged"])
-        self.assertTrue(project_diff.collect_diff(self.repo, untracked=True)["previews"]["untracked"])
+        modes = {
+            "untracked": project_diff.collect_diff(self.repo, untracked=True),
+            "staged": project_diff.collect_diff(self.repo, staged=True),
+            "unstaged": project_diff.collect_diff(self.repo, unstaged=True),
+            "staged_untracked": project_diff.collect_diff(self.repo, staged=True, untracked=True),
+            "unstaged_untracked": project_diff.collect_diff(self.repo, unstaged=True, untracked=True),
+            "tracked": project_diff.collect_diff(self.repo, staged=True, unstaged=True),
+            "all": project_diff.collect_diff(self.repo, staged=True, unstaged=True, untracked=True),
+        }
+        self.assertEqual((1, 1, 1), tuple(modes["untracked"]["counts"][key] for key in ("staged", "unstaged", "untracked")))
+        self.assertEqual(("collected", "not_requested", "not_requested"), tuple(modes["staged"]["sections"][key]["status"] for key in ("staged", "unstaged", "untracked")))
+        self.assertEqual(("not_requested", "collected", "not_requested"), tuple(modes["unstaged"]["sections"][key]["status"] for key in ("staged", "unstaged", "untracked")))
+        self.assertEqual(("collected", "not_requested", "collected"), tuple(modes["staged_untracked"]["sections"][key]["status"] for key in ("staged", "unstaged", "untracked")))
+        self.assertEqual(("not_requested", "collected", "collected"), tuple(modes["unstaged_untracked"]["sections"][key]["status"] for key in ("staged", "unstaged", "untracked")))
+        self.assertEqual(("collected", "collected", "not_requested"), tuple(modes["tracked"]["sections"][key]["status"] for key in ("staged", "unstaged", "untracked")))
+        self.assertTrue(all(modes["all"]["sections"][key]["status"] == "collected" for key in ("staged", "unstaged", "untracked")))
+        self.assertTrue(modes["untracked"]["previews"]["untracked"])
+        self.assertIsNone(modes["staged"]["counts"]["unstaged"])
+        output = StringIO()
+        with redirect_stdout(output): project_diff.print_diff(modes["staged"])
+        self.assertIn("unstaged: not requested", output.getvalue())
     def test_path_multiple_empty_and_japanese_content(self):
         self.assertEqual(1, project_diff.collect_diff(self.repo, paths=["a.txt"])["counts"]["unstaged"])
-        self.assertEqual(2, sum(project_diff.collect_diff(self.repo, paths=["a.txt", "new.txt"])["counts"].values()))
-        self.assertEqual(0, sum(project_diff.collect_diff(self.repo, paths=[".gitignore"])["counts"].values()))
+        self.assertEqual(2, sum(value or 0 for value in project_diff.collect_diff(self.repo, paths=["a.txt", "new.txt"])["counts"].values()))
+        empty = project_diff.collect_diff(self.repo, paths=[".gitignore"])
+        self.assertEqual(0, sum(value or 0 for value in empty["counts"].values()))
+        self.assertEqual(("collected", 0), (empty["sections"]["staged"]["status"], empty["counts"]["staged"]))
         preview = project_diff.collect_diff(self.repo, paths=["new.txt"], untracked=True)["previews"]["untracked"][0]
         self.assertIn("日本語", "".join(preview["content"]))
     def test_untracked_binary_large_and_limits(self):
@@ -99,9 +120,15 @@ class DiffTests(unittest.TestCase):
         self.assertTrue(project_diff.collect_diff(self.repo, untracked=True, max_lines=1)["truncated"])
     def test_ignored_explicit_and_secret(self):
         hidden = project_diff.collect_diff(self.repo, paths=["artifact.json"])
-        self.assertEqual(0, hidden["counts"]["ignored"])
+        self.assertIsNone(hidden["counts"]["ignored"])
+        self.assertEqual("not_requested", hidden["sections"]["ignored"]["status"])
         shown = project_diff.collect_diff(self.repo, paths=["artifact.json"], include_ignored=True)
         self.assertEqual(1, shown["counts"]["ignored"]); self.assertTrue(shown["previews"]["ignored"][0]["content"])
+        empty = project_diff.collect_diff(self.repo, paths=["a.txt"], include_ignored=True)
+        self.assertEqual(("collected", 0), (empty["sections"]["ignored"]["status"], empty["counts"]["ignored"]))
+        skipped = project_diff.collect_diff(self.repo, include_ignored=True)
+        self.assertEqual("skipped", skipped["sections"]["ignored"]["status"])
+        self.assertEqual("explicit path required", skipped["sections"]["ignored"]["reason"])
         secret = project_diff.collect_diff(self.repo, paths=["token.json"], include_ignored=True)["previews"]["ignored"][0]
         self.assertIn("secret-like", secret["reason"]); self.assertFalse(secret["content"])
     def test_summary_only_and_escapes(self):
@@ -129,17 +156,46 @@ class FinishTests(unittest.TestCase):
             with patch.object(task_metrics, "METRICS_FILE", log):
                 first = task_metrics.TaskMetrics(repo=Path(directory), command="codex_tools.py", subcommand="search", task_id="same")
                 first.finish("success")
-                summary = task_metrics.summarize_task("same")
+                summary = task_metrics.summarize_task("same", log)
                 self.assertEqual(2, summary["command_count"]); self.assertEqual(1, summary["search_count"]); self.assertFalse(summary["duplicate_finish"])
-                finish = task_metrics.TaskMetrics(repo=Path(directory), command="codex_tools.py", subcommand="finish", task_id="same", additional_instruction_count=2, rework_count=1)
-                finish.extra_fields.update(summary); finish.finish("success")
+                finish = task_metrics.TaskMetrics(repo=Path(directory), command="codex_tools.py", subcommand="finish", task_id="same", additional_instruction_count=2, rework_count=1, metrics_file=log)
+                with redirect_stdout(StringIO()): run_finish("same", finish)
                 record = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
                 self.assertEqual((2, 1), (record["additional_instruction_count"], record["rework_count"])); self.assertEqual(0, record["logical_provider_calls"])
-                self.assertTrue(task_metrics.summarize_task("same")["duplicate_finish"])
-            with patch.object(task_metrics, "METRICS_FILE", Path("/proc/no/task.jsonl")):
-                task_metrics.TaskMetrics(repo=None, command="codex_tools.py", subcommand="finish").finish("success")
+                self.assertTrue(task_metrics.summarize_task("same", log)["duplicate_finish"])
+                second = task_metrics.TaskMetrics(repo=Path(directory), command="codex_tools.py", subcommand="finish", task_id="same", metrics_file=log)
+                output = StringIO()
+                with redirect_stdout(output): result = run_finish("same", second)
+                self.assertTrue(result["duplicate_finish"])
+                self.assertEqual((1, 2), (result["finish_count_before"], result["finish_count_after"]))
+                self.assertTrue(result["current_finish_record_written"])
+            task_metrics._warned_write_failures.clear()
+            errors = StringIO()
+            with redirect_stderr(errors):
+                result = task_metrics.TaskMetrics(repo=None, command="codex_tools.py", subcommand="finish", metrics_file=Path("/proc/no/task.jsonl")).finish("success")
+            self.assertFalse(result.success)
+            self.assertIn("WARNING: task metrics record could not be written", errors.getvalue())
+            task_metrics._warned_write_failures.clear()
+            errors = StringIO(); output = StringIO()
+            failed_finish = task_metrics.TaskMetrics(repo=None, command="codex_tools.py", subcommand="finish", task_id="failed", metrics_file=Path("/proc/no/task.jsonl"))
+            with redirect_stderr(errors), redirect_stdout(output):
+                summary = run_finish("failed", failed_finish)
+            self.assertEqual("failed", summary["metrics_write_status"])
+            self.assertFalse(summary["current_finish_record_written"])
+            self.assertIn("WARNING", errors.getvalue())
     def test_task_id_default_is_preserved(self):
         self.assertTrue(task_metrics.TaskMetrics(repo=None, command="x").task_id)
+
+    def test_diff_count_and_injected_absolute_log_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "missing" / "metrics.jsonl"
+            for _ in range(2):
+                task_metrics.TaskMetrics(repo=directory, command="codex_tools.py", subcommand="diff", task_id="task", metrics_file=log).finish("success")
+            self.assertTrue(log.exists())
+            summary = task_metrics.summarize_task("task", log)
+            self.assertEqual(2, summary["diff_count"])
+            self.assertTrue(Path(summary["metrics_log_path"]).is_absolute())
+            self.assertEqual(0, task_metrics.summarize_task("other", log)["diff_count"])
 
 
 if __name__ == "__main__": unittest.main()

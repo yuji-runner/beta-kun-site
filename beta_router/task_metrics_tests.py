@@ -6,6 +6,8 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -123,13 +125,39 @@ class TaskMetricsTests(unittest.TestCase):
         self.assertNotIn("private payload", message)
 
     def test_metrics_write_failure_is_non_fatal(self) -> None:
-        with patch.object(
-            task_metrics,
-            "METRICS_FILE",
-            Path("/proc/task_metrics.jsonl"),
+        task_metrics._warned_write_failures.clear()
+        errors = StringIO()
+        with redirect_stderr(errors):
+            metrics = TaskMetrics(
+                repo=None,
+                command="test",
+                metrics_file=Path("/proc/task_metrics.jsonl"),
+            )
+            result = metrics.finish("success")
+        self.assertFalse(result.success)
+        self.assertIn(result.error_type, {"OSError", "FileNotFoundError"})
+        self.assertIn("WARNING", errors.getvalue())
+
+    def test_write_error_is_redacted_and_warned_only_once(self) -> None:
+        task_metrics._warned_write_failures.clear()
+        errors = StringIO()
+        with (
+            patch.object(Path, "open", side_effect=OSError("API_KEY=secret-value")),
+            redirect_stderr(errors),
         ):
-            metrics = TaskMetrics(repo=None, command="test")
-            metrics.finish("success")
+            first = TaskMetrics(repo=None, command="test", metrics_file="relative.jsonl").finish("success")
+            TaskMetrics(repo=None, command="test", metrics_file="relative.jsonl").finish("success")
+        self.assertFalse(first.success)
+        self.assertNotIn("secret-value", first.error_message)
+        self.assertEqual(1, errors.getvalue().count("WARNING"))
+
+    def test_metrics_directory_is_created_and_path_is_injectable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "new" / "metrics.jsonl"
+            result = TaskMetrics(repo=None, command="test", metrics_file=log).finish("success")
+            self.assertTrue(result.success)
+            self.assertTrue(log.exists())
+            self.assertTrue(Path(result.path).is_absolute())
 
 
 if __name__ == "__main__":

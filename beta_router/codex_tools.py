@@ -8,13 +8,13 @@ if __package__:
     from .project_context import build_context, print_text
     from .project_diff import DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, collect_diff, print_diff
     from .project_search import DEFAULT_MAX_RESULTS, print_search, search_project_report
-    from .task_metrics import TaskMetrics, summarize_task
+    from .task_metrics import TaskMetrics, read_task_records, summarize_task
     from .test_runner import TARGETS, run_target
 else:
     from project_context import build_context, print_text
     from project_diff import DEFAULT_MAX_FILES, DEFAULT_MAX_LINES, collect_diff, print_diff
     from project_search import DEFAULT_MAX_RESULTS, print_search, search_project_report
-    from task_metrics import TaskMetrics, summarize_task
+    from task_metrics import TaskMetrics, read_task_records, summarize_task
     from test_runner import TARGETS, run_target
 
 
@@ -55,12 +55,34 @@ def run_search(
     return 0 if report["results"] else 1
 
 
-def run_finish(task_id: str) -> dict:
-    summary = summarize_task(task_id)
+def run_finish(task_id: str, metrics: TaskMetrics) -> dict:
+    before = summarize_task(task_id, metrics.metrics_file)
+    finish_count_before = before["finish_count"]
+    metrics.extra_fields.update({
+        **before,
+        "finish_count_before": finish_count_before,
+        "finish_count_after": finish_count_before + 1,
+        "current_finish_record_written": True,
+    })
+    write_result = metrics.close("success")
+    after = summarize_task(task_id, metrics.metrics_file)
+    current_written = any(
+        item.get("timestamp_start") == metrics.timestamp_start
+        and item.get("subcommand") == "finish"
+        for item in read_task_records(task_id, metrics.metrics_file)
+    )
+    summary = {
+        **before,
+        "finish_count_before": finish_count_before,
+        "finish_count_after": after["finish_count"],
+        "current_finish_record_written": current_written,
+        "metrics_write_status": "success" if write_result.success and current_written else "failed",
+        "metrics_write_error_type": write_result.error_type,
+    }
     print("=" * 64); print("TASK FINISH"); print("=" * 64)
     for key, value in summary.items():
         print(f"{key}: {value}")
-    if summary["duplicate_finish"]:
+    if finish_count_before:
         print("warning: this task_id already has a finish record")
     return summary
 
@@ -260,8 +282,7 @@ def main() -> None:
             )
 
         elif args.command == "finish":
-            summary = run_finish(metrics.task_id)
-            metrics.extra_fields.update(summary)
+            run_finish(metrics.task_id, metrics)
             exit_code = 0
 
         else:
@@ -279,7 +300,8 @@ def main() -> None:
     metrics.test_status = (
         "pass" if exit_code == 0 else "fail"
     ) if args.command == "test" else None
-    metrics.close("success" if exit_code == 0 else "error")
+    if args.command != "finish":
+        metrics.close("success" if exit_code == 0 else "error")
 
     raise SystemExit(exit_code)
 

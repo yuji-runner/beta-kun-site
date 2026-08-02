@@ -39,6 +39,15 @@ python3 codex_tools.py --repo ~/python-study/my-dashboard \
 staged、unstaged、untrackedを分離します。未追跡本文は`--untracked`時だけ、
 ignored本文は明示pathと`--include-ignored`の組合せだけ表示します。
 
+diff modeの契約:
+
+- オプションなし: staged、unstaged、untracked一覧を取得
+- `--untracked`のみ: staged、unstagedに未追跡本文表示を追加
+- `--staged`のみ / `--unstaged`のみ: 指定したtracked区分だけ取得
+- `--staged --untracked` / `--unstaged --untracked`: 指定tracked区分とuntrackedを取得
+- 取得していない区分は0件ではなく`not requested`と表示
+- `--include-ignored`に明示pathがない場合は、安全のため`skipped`と表示
+
 ```bash
 python3 codex_tools.py --repo ~/python-study/my-dashboard diff \
   --path data/pmda_dose_rule_stage6_colchicine_20260801.json --include-ignored
@@ -62,6 +71,9 @@ python3 beta-kun-site/beta_router/codex_tools.py \
 ```
 
 同一task_idで再度finishしても追記し、`duplicate_finish: true`と警告を出します。
+finishは書込み前後のfinish件数、現在のfinishレコード確認結果、metrics logの
+絶対pathと書込みstatusも表示します。計測ログの書込みに失敗しても本処理は
+継続しますが、秘密情報をマスクした短いwarningをstderrへ1回出します。
 
 ## テスト
 python3 beta-kun-site/beta_router/codex_tools.py \

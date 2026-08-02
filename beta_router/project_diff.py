@@ -140,19 +140,39 @@ def _submodules(repo: Path, items: list[dict]) -> list[dict]:
 def collect_diff(repo: Path, *, query: str | None = None, paths: list[str] | None = None, staged: bool = False, unstaged: bool = False, untracked: bool = False, include_ignored: bool = False, summary_only: bool = False, max_files: int = DEFAULT_MAX_FILES, max_lines: int = DEFAULT_MAX_LINES) -> dict:
     repo = repo.expanduser().resolve()
     selected_paths = resolve_paths(repo, paths)
-    explicit_modes = staged or unstaged or untracked
-    show_staged, show_unstaged = (staged, unstaged) if explicit_modes else (True, True)
+    explicit_tracked_modes = staged or unstaged
+    show_staged = staged if explicit_tracked_modes else True
+    show_unstaged = unstaged if explicit_tracked_modes else True
     staged_items = _name_status(repo, True, selected_paths) if show_staged else []
     unstaged_items = _name_status(repo, False, selected_paths) if show_unstaged else []
-    show_untracked = untracked or not explicit_modes
+    show_untracked = untracked or not explicit_tracked_modes
     untracked_files = _list_files(repo, False, selected_paths) if show_untracked else []
     if query:
         accept = lambda value: query.lower() in value.lower()
         staged_items = [x for x in staged_items if accept(x["path"])]
         unstaged_items = [x for x in unstaged_items if accept(x["path"])]
         untracked_files = [x for x in untracked_files if accept(x)]
-    ignored_files = _list_files(repo, True, selected_paths) if include_ignored and selected_paths else []
-    total_counts = {"staged": len(staged_items), "unstaged": len(unstaged_items), "untracked": len(untracked_files), "ignored": len(ignored_files)}
+    ignored_status = "collected" if include_ignored and selected_paths else ("skipped" if include_ignored else "not_requested")
+    ignored_reason = "explicit path required" if ignored_status == "skipped" else None
+    ignored_files = _list_files(repo, True, selected_paths) if ignored_status == "collected" else []
+    requested = {
+        "staged": show_staged,
+        "unstaged": show_unstaged,
+        "untracked": show_untracked,
+        "ignored": include_ignored,
+    }
+    statuses = {
+        "staged": "collected" if show_staged else "not_requested",
+        "unstaged": "collected" if show_unstaged else "not_requested",
+        "untracked": "collected" if show_untracked else "not_requested",
+        "ignored": ignored_status,
+    }
+    total_counts = {
+        "staged": len(staged_items) if show_staged else None,
+        "unstaged": len(unstaged_items) if show_unstaged else None,
+        "untracked": len(untracked_files) if show_untracked else None,
+        "ignored": len(ignored_files) if ignored_status == "collected" else None,
+    }
     all_files = [x["path"] for x in staged_items + unstaged_items] + untracked_files + ignored_files
     truncated_files = len(dict.fromkeys(all_files)) > max_files
     permitted = set(list(dict.fromkeys(all_files))[:max_files])
@@ -178,14 +198,32 @@ def collect_diff(repo: Path, *, query: str | None = None, paths: list[str] | Non
             preview = _file_preview(repo, relative, lines_left); previews["ignored"].append(preview); lines_left -= len(preview["content"])
     _, branch, _ = run_git(repo, "branch", "--show-current")
     _, latest, _ = run_git(repo, "log", "-1", "--oneline")
-    return {"repository": str(repo), "branch": branch or "(detached)", "latest_commit": latest, "query": query, "paths": selected_paths, "staged": staged_items, "unstaged": unstaged_items, "untracked": untracked_files, "ignored": ignored_files, "previews": previews, "counts": total_counts, "displayed_counts": {"staged": len(staged_items), "unstaged": len(unstaged_items), "untracked": len(untracked_files), "ignored": len(ignored_files)}, "truncated": truncated_files or truncated_lines or lines_left <= 0, "max_files": max_files, "max_lines": max_lines, "submodules": _submodules(repo, staged_items + unstaged_items)}
+    sections = {
+        key: {
+            "requested": requested[key],
+            "status": statuses[key],
+            "count": total_counts[key],
+            "reason": ignored_reason if key == "ignored" else None,
+        }
+        for key in ("staged", "unstaged", "untracked", "ignored")
+    }
+    return {"repository": str(repo), "branch": branch or "(detached)", "latest_commit": latest, "query": query, "paths": selected_paths, "staged": staged_items, "unstaged": unstaged_items, "untracked": untracked_files, "ignored": ignored_files, "sections": sections, "previews": previews, "counts": total_counts, "displayed_counts": {"staged": len(staged_items), "unstaged": len(unstaged_items), "untracked": len(untracked_files), "ignored": len(ignored_files)}, "truncated": truncated_files or truncated_lines or lines_left <= 0, "max_files": max_files, "max_lines": max_lines, "submodules": _submodules(repo, staged_items + unstaged_items)}
 
 
 def print_diff(context: dict) -> None:
     print("=" * 72); print("PROJECT DIFF"); print("=" * 72)
     print(f"repository: {context['repository']}"); print(f"branch: {context['branch']}"); print(f"latest_commit: {context['latest_commit']}"); print(f"paths: {context['paths'] or ['.']}")
     for key, title in (("staged", "staged"), ("unstaged", "unstaged"), ("untracked", "untracked"), ("ignored", "ignored relevant files")):
-        print("-" * 72); print(f"{title} ({context['counts'][key]})")
+        section = context["sections"][key]
+        print("-" * 72)
+        if section["status"] == "not_requested":
+            print(f"{title}: not requested")
+            continue
+        if section["status"] == "skipped":
+            print(f"{title}: skipped")
+            print(f"  reason: {section['reason']}")
+            continue
+        print(f"{title} ({section['count']})")
         items = context[key]
         for item in items:
             print(f"  {item.get('status', '??') if isinstance(item, dict) else '??'}  {item['path'] if isinstance(item, dict) else item}")
