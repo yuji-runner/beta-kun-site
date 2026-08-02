@@ -6,6 +6,50 @@ HTML = pathlib.Path(__file__).with_name("search.html").read_text(encoding="utf-8
 
 
 class PediatricDoseUiContractTests(unittest.TestCase):
+    def test_ordered_regimen_single_route_is_visible_and_auto_selected(self):
+        self.assertIn("engine.ordered_regimen_supported", HTML)
+        self.assertIn("orderedCapability.available_routes", HTML)
+        self.assertIn("orderedCapability.route_auto_selectable", HTML)
+        self.assertIn('document.getElementById("doseRouteInput").disabled', HTML)
+        self.assertIn('label: route.label || route.canonical || route.value', HTML)
+
+    def test_ordered_regimen_uses_canonical_route_in_payload(self):
+        self.assertIn('requiredInputs.includes("route")', HTML)
+        self.assertIn("payload.route = route", HTML)
+        self.assertIn('value: route.canonical || route.value', HTML)
+
+    def test_multiple_routes_remain_user_selectable(self):
+        self.assertIn("routes.length > 1 || Boolean(orderedCapability && routes.length)", HTML)
+        self.assertIn("routes.length !== 1", HTML)
+        self.assertIn("routes.length === 1", HTML)
+
+    def test_missing_inputs_are_named_explicitly(self):
+        self.assertIn('route: "投与経路を選択してください。"', HTML)
+        self.assertIn('indication: "適応症を選択してください。"', HTML)
+        self.assertIn('age: "年齢を入力してください。"', HTML)
+        self.assertIn('weight: "体重を入力してください。"', HTML)
+        self.assertIn("missingInputs.map", HTML)
+
+    def test_ordered_regimen_renders_all_unselected_steps(self):
+        self.assertIn("function renderOrderedRegimen(rule)", HTML)
+        self.assertIn("rule.ordered_dose_steps", HTML)
+        self.assertIn('Number(left.order) - Number(right.order)', HTML)
+        self.assertIn('mg/回</td>', HTML)
+        self.assertIn("承認用量の段階（現在段階は未選択）", HTML)
+        self.assertIn("現在段階・次段階を自動選択または自動推奨しません", HTML)
+        self.assertIn("忍容性を確認し、段階の選択は医師が判断してください", HTML)
+
+    def test_ordered_regimen_does_not_add_product_conversion(self):
+        ordered_renderer = HTML.split("function renderOrderedRegimen(rule)", 1)[1].split(
+            "function renderSubsequentRegimen", 1
+        )[0]
+        self.assertNotIn("product_conversion", ordered_renderer)
+        self.assertNotIn("rounding", ordered_renderer)
+        self.assertNotIn("tablet", ordered_renderer)
+        self.assertNotIn("70g", ordered_renderer)
+        self.assertNotIn("31mL", ordered_renderer)
+        self.assertNotIn("12.5mg", ordered_renderer)
+
     def test_starting_cap_has_starting_semantics(self):
         self.assertIn('regimenRole === "starting"', HTML)
         self.assertIn("<h3>開始量上限</h3>", HTML)

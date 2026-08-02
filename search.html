@@ -622,6 +622,7 @@
       pediatric_age_limit: "小児用量検索の対象年齢外です",
       no_match: "対応する承認済み用量ルールが見つかりません",
       input_required: "必要な入力項目を確認してください",
+      invalid_input: "入力内容を確認してください",
       weight_required: "体重を入力してください",
       body_surface_area_required: "確認済み体表面積を入力してください",
       indication_required: "適応症を選択してください",
@@ -1205,14 +1206,26 @@
       document.getElementById("doseBsaFields").hidden = !bodySurfaceAreaRequired;
       document.getElementById("doseWeightFields").hidden = bodySurfaceAreaRequired;
       const contexts = (capabilityData.engine_capabilities || []).flatMap(engine => Array.isArray(engine.contexts) ? engine.contexts : []);
+      const orderedCapability = (capabilityData.engine_capabilities || []).find(
+        engine => engine.engine === "stage5" && engine.ordered_regimen_supported
+      ) || null;
       const indications = uniqueDoseOptions(contexts.map(context => context.indication).filter(Boolean).map(item => ({
         value: item.label || item.id || String(item),
         label: item.label || item.id || String(item)
       })));
-      const routes = uniqueDoseOptions(contexts.map(context => context.route).filter(Boolean).map(value => ({
-        value,
-        label: value === "oral" ? "経口" : value === "rectal" ? "直腸" : value
-      })));
+      const declaredRoutes = normalizeList(
+        orderedCapability && orderedCapability.available_routes
+        || capabilityData.available_routes
+      );
+      const routes = declaredRoutes.length
+        ? uniqueDoseOptions(declaredRoutes.map(route => ({
+            value: route.canonical || route.value,
+            label: route.label || route.canonical || route.value
+          })).filter(route => route.value))
+        : uniqueDoseOptions(contexts.map(context => context.route).filter(Boolean).map(value => ({
+            value,
+            label: value === "oral" ? "経口" : value === "rectal" ? "直腸内" : value === "transdermal" ? "経皮" : value
+          })));
       // Prefer explicit context_options from the API. These carry stable values
       // (product/rule identifiers) separately from user-facing labels.
       const explicitFormOptions = extractContextOptions(capabilityData, "dosage_form");
@@ -1233,28 +1246,29 @@
       configureDoseSelect("doseTherapyRoleInput", therapyRoleOptions);
       configureDoseSelect("doseInducerStatusInput", inducerStatusOptions);
       const showIndication = indications.length > 1;
-      const showRoute = routes.length > 1;
-      const explicitRequired = Array.isArray(capabilityData.required_context) ? capabilityData.required_context : (Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : []);
+      const showRoute = routes.length > 1 || Boolean(orderedCapability && routes.length);
+      const explicitRequired = Array.isArray(capabilityData.required_contexts) ? capabilityData.required_contexts : [];
       // Resolve context in clinical order. Do not mix products from different
       // routes in the formulation selector before the route is chosen.
       const optionalContexts = (capabilityData.engine_capabilities || []).flatMap(
         engine => Array.isArray(engine.optional_contexts) ? engine.optional_contexts : []
       );
       const optionalProductSelection = optionalContexts.includes("product");
-      if (showIndication) {
-        doseRequiredContexts = ["indication"];
-      } else if (showRoute) {
-        doseRequiredContexts = ["route"];
-      } else {
-        doseRequiredContexts = explicitRequired.filter(name => !["indication", "route"].includes(name));
-        if (!doseRequiredContexts.length && selectableForms.length > 1 && !optionalProductSelection) {
-          doseRequiredContexts.push("dosage_form");
-        }
+      doseRequiredContexts = explicitRequired.filter(name => {
+        if (name === "indication") return indications.length !== 1;
+        if (name === "route") return routes.length !== 1;
+        return true;
+      });
+      if (!doseRequiredContexts.length && selectableForms.length > 1 && !optionalProductSelection && !showIndication && !showRoute) {
+        doseRequiredContexts.push("dosage_form");
       }
       const deferDosageForm = showIndication || showRoute;
       configureDoseSelect("doseDosageFormInput", deferDosageForm ? [] : selectableForms);
       document.getElementById("doseIndicationField").hidden = !showIndication;
       document.getElementById("doseRouteField").hidden = !showRoute;
+      document.getElementById("doseRouteInput").disabled = Boolean(
+        orderedCapability && orderedCapability.route_auto_selectable && routes.length === 1
+      );
       document.getElementById("doseDosageFormField").hidden = deferDosageForm || !(selectableForms.length > 1 || optionalProductSelection || doseRequiredContexts.includes("dosage_form") || doseRequiredContexts.includes("formulation") || doseRequiredContexts.includes("product"));
       document.getElementById("doseTherapyRoleField").hidden = therapyRoleOptions.length === 0;
       document.getElementById("doseInducerStatusField").hidden = inducerStatusOptions.length === 0;
@@ -1420,8 +1434,8 @@
       }
       const indication = contextValues.indication;
       const route = contextValues.route;
-      if (!document.getElementById("doseIndicationField").hidden && indication) payload.indication = indication;
-      if (!document.getElementById("doseRouteField").hidden && route) payload.route = route;
+      if (indication && (!document.getElementById("doseIndicationField").hidden || requiredInputs.includes("indication") || doseCapabilities.required_contexts?.includes("indication"))) payload.indication = indication;
+      if (route && (!document.getElementById("doseRouteField").hidden || requiredInputs.includes("route") || doseCapabilities.required_contexts?.includes("route"))) payload.route = route;
       if (!document.getElementById("doseDosageFormField").hidden && contextValues.dosage_form) payload.dosage_form = contextValues.dosage_form;
       const selectedOptionMeta = doseContextOptionMeta[contextValues.dosage_form];
       if (selectedOptionMeta && selectedOptionMeta.product_id) payload.product_id = selectedOptionMeta.product_id;
@@ -1496,6 +1510,20 @@
         const label = DOSE_STATUS_LABELS[envelope.status] || "必要な条件を選択してください";
         status.textContent = label;
         results.innerHTML = "";
+        return;
+      }
+      if (["input_required", "invalid_input", "insufficient_input"].includes(envelope.status)) {
+        const missingInputs = normalizeList(envelope.result && envelope.result.missing_inputs || envelope.missing_inputs);
+        const inputLabels = {
+          age: "年齢を入力してください。",
+          weight: "体重を入力してください。",
+          route: "投与経路を選択してください。",
+          indication: "適応症を選択してください。"
+        };
+        const messages = missingInputs.map(name => inputLabels[name] || `${name}を確認してください。`);
+        const label = messages.length ? messages.join(" ") : (DOSE_STATUS_LABELS[envelope.status] || "入力内容を確認してください。");
+        status.textContent = label;
+        results.innerHTML = `<div class="dose-error">${escapeHtml(label)}</div>`;
         return;
       }
       if (envelope.status === "matched" || envelope.status === "multiple_dose_rules") {
@@ -1972,6 +2000,7 @@
       const nonautomaticTitrationHtml = renderNonautomaticDoseTitration(rule.titration, rule);
       const titrationHtml = renderClinicalTitration(rule);
       const administrationTimingHtml = renderAdministrationTiming(rule.administration_timing);
+      const orderedRegimenHtml = renderOrderedRegimen(rule);
       const productHtml = productMappings.length
         ? renderProductMappings(productMappings)
         : [
@@ -1988,6 +2017,7 @@
           ${renderDoseField("対象年齢区分", rule.age_condition_text || rule.age_condition)}
           ${renderDoseField("年齢条件の注記", rule.age_lower_bound_note)}
           ${renderDoseField("用量区分", rule.dose_classification)}
+          ${orderedRegimenHtml}
           ${renderDoseField("添付文書上の用量", rule.dose_expression_text || rule.prescribed_dose || rule.dose_per_administration)}
           ${renderDoseField("用量調整", rule.adjustment_text)}
           ${renderDoseField("投与回数", rule.administrations_per_day ? `1日${rule.administrations_per_day}回` : "")}
@@ -2011,6 +2041,31 @@
           <div class="note">薬剤師確認済み</div>
         </div>
       `;
+    }
+
+    function renderOrderedRegimen(rule) {
+      const steps = normalizeList(rule.ordered_dose_steps).slice().sort((left, right) => Number(left.order) - Number(right.order));
+      if (!steps.length) return "";
+      const rows = steps.map(step => `<tr>
+        <td>${escapeHtml(step.label || step.step_id || "")}</td>
+        <td>${escapeHtml(step.calculated_dose_mg_per_dose)} mg/回</td>
+        <td>未選択</td>
+      </tr>`).join("");
+      const interval = rule.titration_interval || {};
+      const intervalText = interval.min_weeks !== undefined && interval.max_weeks !== undefined
+        ? `${interval.min_weeks}～${interval.max_weeks}週間ごと`
+        : "";
+      return `<div class="dose-field ordered-regimen">
+        <strong>承認用量の段階（現在段階は未選択）</strong>
+        <table>
+          <thead><tr><th>段階</th><th>1回成分量</th><th>選択状態</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${renderDoseField("投与回数", rule.frequency_times_per_day ? `1日${rule.frequency_times_per_day}回` : "")}
+        ${renderDoseField("漸増間隔", intervalText)}
+        <div class="notice">すべて1回量です。現在段階・次段階を自動選択または自動推奨しません。</div>
+        ${rule.physician_judgment_required ? '<div class="dose-warning">忍容性を確認し、段階の選択は医師が判断してください。</div>' : ""}
+      </div>`;
     }
 
     function renderSubsequentRegimen(regimen) {
